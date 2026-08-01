@@ -100,6 +100,12 @@
 (defmacro ^:private codepoint [c]
   (int c))
 
+;; JVM strings are indexed by UTF-16 code unit; Jolt strings are indexed by
+;; Unicode scalar value. Detect that semantic difference once so escaped and
+;; raw supplementary characters can preserve each host's string contract.
+(def ^:private scalar-indexed-strings?
+  (= 1 (.length "😃")))
+
 (defn- codepoint-clause [[test result]]
   (cond (list? test)
         [(map int test) result]
@@ -116,7 +122,7 @@
      ~@(when (odd? (count clauses))
          [(last clauses)])))
 
-(defn- read-hex-char [^InternalPBR stream]
+(defn- read-hex-code-unit [^InternalPBR stream]
   ;; Expects to be called with the head of the stream AFTER the
   ;; initial "\u".  Reads the next four characters from the stream.
   (let [a (.readChar stream)
@@ -127,7 +133,45 @@
       (throw (EOFException.
               "JSON error (end-of-file inside Unicode character escape)")))
     (let [s (str (char a) (char b) (char c) (char d))]
-      (char (Integer/parseInt s 16)))))
+      (Integer/parseInt s 16))))
+
+(defn- high-surrogate? [cp]
+  (<= 0xD800 cp 0xDBFF))
+
+(defn- low-surrogate? [cp]
+  (<= 0xDC00 cp 0xDFFF))
+
+(defn- codepoint-string [cp]
+  (String. (Character/toChars cp)))
+
+(defn- read-unicode-escape [^InternalPBR stream]
+  (let [head (read-hex-code-unit stream)]
+    (if-not scalar-indexed-strings?
+      ;; Preserve data.json's JVM behavior exactly: each \uXXXX denotes one
+      ;; UTF-16 code unit, including an isolated surrogate.
+      (codepoint-string head)
+      (cond
+        (high-surrogate? head)
+        (let [slash (.readChar stream)
+              u (.readChar stream)]
+          (when (or (neg? slash) (neg? u))
+            (throw (EOFException.
+                    "JSON error (end-of-file inside Unicode surrogate pair)")))
+          (when (or (not= slash (int \\)) (not= u (int \u)))
+            (throw (Exception.
+                    "JSON error (high surrogate not followed by a low-surrogate escape)")))
+          (let [tail (read-hex-code-unit stream)]
+            (when-not (low-surrogate? tail)
+              (throw (Exception.
+                      "JSON error (high surrogate not followed by a low surrogate)")))
+            (codepoint-string
+              (+ 0x10000 (* (- head 0xD800) 0x400) (- tail 0xDC00)))))
+
+        (low-surrogate? head)
+        (throw (Exception. "JSON error (unpaired low surrogate)"))
+
+        :else
+        (codepoint-string head)))))
 
 (defn- read-escaped-char [^InternalPBR stream]
   ;; Expects to be called with the head of the stream AFTER the
@@ -136,13 +180,13 @@
     (when (neg? c)
       (throw (EOFException. "JSON error (end-of-file inside escaped char)")))
     (codepoint-case c
-      (\" \\ \/) (char c)
-      \b \backspace
-      \f \formfeed
-      \n \newline
-      \r \return
-      \t \tab
-      \u (read-hex-char stream))))
+      (\" \\ \/) (str (char c))
+      \b (str \backspace)
+      \f (str \formfeed)
+      \n (str \newline)
+      \r (str \return)
+      \t (str \tab)
+      \u (read-unicode-escape stream))))
 
 (defn- slow-read-string [^InternalPBR stream ^String already-read]
   (let [buffer (StringBuilder. already-read)]
@@ -154,7 +198,9 @@
           \" (str buffer)
           \\ (do (.append buffer (read-escaped-char stream))
                  (recur))
-          (do (.append buffer (char c))
+          (do (if (<= c 0xFFFF)
+                (.append buffer (char c))
+                (.append buffer (codepoint-string c)))
               (recur)))))))
 
 (defn- read-quoted-string [^InternalPBR stream]
@@ -576,6 +622,18 @@
       (.append out "0"))
     (.append out (Integer/toHexString cp))))
 
+(defn- ->unicode-escape [^Appendable out cp]
+  (if (<= cp 0xFFFF)
+    (->hex-string out cp)
+    (let [supplementary (- cp 0x10000)]
+      (->hex-string out (+ 0xD800 (quot supplementary 0x400)))
+      (->hex-string out (+ 0xDC00 (mod supplementary 0x400))))))
+
+(defn- append-codepoint [^Appendable out cp]
+  (if (<= cp 0xFFFF)
+    (.append out (char cp))
+    (.append out ^String (codepoint-string cp))))
+
 (def ^{:tag "[S"} codepoint-decoder
   (let [shorts (short-array 128)]
     (dotimes [i 128]
@@ -597,33 +655,45 @@
   (let [decoder codepoint-decoder
         slash (get options :escape-slash)
         escape-js-separators (get options :escape-js-separators)
-        escape-unicode (get options :escape-unicode)]
-    (dotimes [i (.length s)]
-      (let [cp (int (.charAt s i))]
-        (if (< cp 128)
-          (case (aget decoder cp)
-            0 (.append out (char cp))
-            1 (do (.append out (char (codepoint \\))) (.append out (char cp)))
-            2 (.append out (if slash "\\/" "/"))
-            3 (.append out "\\b")
-            4 (.append out "\\f")
-            5 (.append out "\\n")
-            6 (.append out "\\r")
-            7 (.append out "\\t")
-            8 (->hex-string out cp))
-          (codepoint-case cp
-            :js-separators (if escape-js-separators
-                             (->hex-string out cp)
-                             (.append out (char cp)))
-            (if escape-unicode
-              (->hex-string out cp) ; Hexadecimal-escaped
-              (.append out (char cp)))))))))
+        escape-unicode (get options :escape-unicode)
+        l (.length s)]
+    (loop [i (long 0)]
+      (when (< i l)
+        (let [head (int (.charAt s i))
+              tail (if (and (not scalar-indexed-strings?)
+                            (<= 0xD800 head 0xDBFF)
+                            (< (inc i) l))
+                     (int (.charAt s (inc i)))
+                     -1)
+              pair? (<= 0xDC00 tail 0xDFFF)
+              cp (int (if pair?
+                        (+ 0x10000 (* (- head 0xD800) 0x400) (- tail 0xDC00))
+                        head))]
+          (if (< cp 128)
+            (case (aget decoder cp)
+              0 (.append out (char cp))
+              1 (do (.append out (char (codepoint \\))) (.append out (char cp)))
+              2 (.append out (if slash "\\/" "/"))
+              3 (.append out "\\b")
+              4 (.append out "\\f")
+              5 (.append out "\\n")
+              6 (.append out "\\r")
+              7 (.append out "\\t")
+              8 (->hex-string out cp))
+            (codepoint-case cp
+              :js-separators (if escape-js-separators
+                               (->hex-string out cp)
+                               (append-codepoint out cp))
+              (if escape-unicode
+                (->unicode-escape out cp)
+                (append-codepoint out cp))))
+          (recur (unchecked-add i (long (if pair? 2 1)))))))))
 
 (defn- write-string [^CharSequence s ^Appendable out options]
   (let [decoder codepoint-decoder
         l (.length s)]
     (.append out \")
-    (loop [i 0]
+    (loop [i (long 0)]
       (if (= i l)
         (.append out s)
         (let [cp (int (.charAt s i))]
