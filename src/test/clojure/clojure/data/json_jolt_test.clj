@@ -16,7 +16,7 @@
   (try
     (f)
     false
-    (catch :default _ true)))
+    (catch Throwable _ true)))
 
 (defn -main [& _]
   (println "data.json scalar-indexed Jolt compatibility")
