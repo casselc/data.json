@@ -7,5 +7,5 @@
    :extra-deps
    {io.github.jolt-lang/time
     {:git/url "https://github.com/jolt-lang/time.git"
-     :git/sha "4da23c58ffacd0ae4fe0679e8ca237c1b011c086"}}
+     :git/sha "da271ca302487c2c5130a0450b4ad4c78d63e656"}}
    :main-opts ["-m" "clojure.data.json-jolt-test"]}}}
