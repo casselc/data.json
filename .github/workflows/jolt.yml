@@ -1,0 +1,49 @@
+name: Jolt compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jolt-0-5-20:
+    name: Jolt 0.5.20 (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+
+      - name: Install Jolt runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblz4-1 zlib1g libtinfo6
+
+      - name: Install pinned Jolt 0.5.20
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/jolt-v0.5.20-x86_64-linux.tar.gz"
+          curl -fsSL \
+            https://github.com/jolt-lang/jolt/releases/download/v0.5.20/jolt-v0.5.20-x86_64-linux.tar.gz \
+            -o "$archive"
+          echo "aa8b4e8a831f5216aa9499cfdcaa151133b4e14ac30f23bc3410114f6d2f989d  $archive" \
+            | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/jolt"
+          tar xzf "$archive" -C "$RUNNER_TEMP/jolt" --strip-components=1
+          test -x "$RUNNER_TEMP/jolt/jolt"
+          echo "$RUNNER_TEMP/jolt" >> "$GITHUB_PATH"
+
+      - name: Run scalar-indexed String compatibility gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME="$RUNNER_TEMP/home"
+          export JOLT_CACHE_DIR="$RUNNER_TEMP/jolt-cache"
+          export TMPDIR="$RUNNER_TEMP/tmp"
+          mkdir -p "$HOME" "$JOLT_CACHE_DIR" "$TMPDIR"
+          JOLT_PWD="$PWD" jolt -M:jolt-test
