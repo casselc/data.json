@@ -1,4 +1,4 @@
-name: Jolt compatibility
+name: Jolt and JVM compatibility
 
 on:
   push:
@@ -9,6 +9,24 @@ permissions:
   contents: read
 
 jobs:
+  jvm:
+    name: JVM Clojure 1.11.4 (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run upstream JVM suite
+        run: mvn -ntp -B -Dclojure.version=1.11.4 clean test
+
   jolt-0-5-20:
     name: Jolt 0.5.20 (Linux x86_64)
     runs-on: ubuntu-24.04
