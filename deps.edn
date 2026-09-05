@@ -1,8 +1,13 @@
 {:paths ["src/main/clojure"]
  :deps {org.clojure/clojure {:mvn/version "1.11.4"}
+        ;; Upstream 91cef5b (v0.0.8) declares the java.time classes this
+        ;; library's Instant/ZoneId writers resolve through (RFC 0014). The
+        ;; chucklehead-dev/time fork 2494b21 has identical src; its only extra
+        ;; is a java.time.zone.ZoneRules provider entry nothing here names.
+        ;; Pinning upstream keeps one time candidate on every consumer's path.
         jolt-lang/time
-        {:git/url "https://github.com/chucklehead-dev/time.git"
-         :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}}
+        {:git/url "https://github.com/jolt-lang/time.git"
+         :git/sha "91cef5b692c624806ea92ba280200162314cdb52"}}
 
  :aliases
  {:jolt-test
