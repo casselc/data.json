@@ -657,8 +657,8 @@
         escape-js-separators (get options :escape-js-separators)
         escape-unicode (get options :escape-unicode)
         l (.length s)]
-    (loop [i (long 0)]
-      (when (< i l)
+    (loop [i (long 0), run-start (long 0)]
+      (if (< i l)
         (let [head (int (.charAt s i))
               tail (if (and (not scalar-indexed-strings?)
                             (<= 0xD800 head 0xDBFF)
@@ -668,26 +668,34 @@
               pair? (<= 0xDC00 tail 0xDFFF)
               cp (int (if pair?
                         (+ 0x10000 (* (- head 0xD800) 0x400) (- tail 0xDC00))
-                        head))]
-          (if (< cp 128)
-            (case (aget decoder cp)
-              0 (.append out (char cp))
-              1 (do (.append out (char (codepoint \\))) (.append out (char cp)))
-              2 (.append out (if slash "\\/" "/"))
-              3 (.append out "\\b")
-              4 (.append out "\\f")
-              5 (.append out "\\n")
-              6 (.append out "\\r")
-              7 (.append out "\\t")
-              8 (->hex-string out cp))
-            (codepoint-case cp
-              :js-separators (if escape-js-separators
-                               (->hex-string out cp)
-                               (append-codepoint out cp))
-              (if escape-unicode
-                (->unicode-escape out cp)
-                (append-codepoint out cp))))
-          (recur (unchecked-add i (long (if pair? 2 1)))))))))
+                        head))
+              decoder-code (int (if (< cp 128) (aget decoder cp) 0))
+              escape? (if (< cp 128)
+                        (and (not (zero? decoder-code))
+                             (not (and (= decoder-code 2) (not slash))))
+                        (codepoint-case cp
+                          :js-separators escape-js-separators
+                          escape-unicode))
+              next-i (unchecked-add i (long (if pair? 2 1)))]
+          (if escape?
+            (do
+              (when (< run-start i)
+                (.append out s (int run-start) (int i)))
+              (if (< cp 128)
+                (case decoder-code
+                  1 (do (.append out (char (codepoint \\))) (.append out (char cp)))
+                  2 (.append out "\\/")
+                  3 (.append out "\\b")
+                  4 (.append out "\\f")
+                  5 (.append out "\\n")
+                  6 (.append out "\\r")
+                  7 (.append out "\\t")
+                  8 (->hex-string out cp))
+                (->unicode-escape out cp))
+              (recur next-i next-i))
+            (recur next-i run-start)))
+        (when (< run-start l)
+          (.append out s (int run-start) (int l)))))))
 
 (defn- write-string [^CharSequence s ^Appendable out options]
   (let [decoder codepoint-decoder

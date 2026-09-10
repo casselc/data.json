@@ -3,6 +3,23 @@
             [clojure.test :refer :all]
             [clojure.string :as str]))
 
+(deftype CountingAppendable [^StringBuilder builder counts]
+  Appendable
+  (^Appendable append [this ^char c]
+    (swap! counts update :char (fnil inc 0))
+    (.append builder c)
+    this)
+  (^Appendable append [this ^CharSequence chars]
+    (swap! counts update :sequence (fnil inc 0))
+    (.append builder chars)
+    this)
+  (^Appendable append [this ^CharSequence chars ^int start ^int end]
+    (swap! counts update :range (fnil inc 0))
+    (.append builder chars start end)
+    this)
+  Object
+  (toString [_] (.toString builder)))
+
 (defn pbr
   ([s]
    (pbr s 64))
@@ -121,6 +138,15 @@
   ;; not change that behavior for existing JVM consumers.
   (is (= "\uD83D" (json/read-str "\"\\ud83d\"")))
   (is (= "\uDE03" (json/read-str "\"\\ude03\""))))
+
+(deftest preserves-unpaired-utf16-writing
+  (doseq [[unit escaped-units]
+          [[0xD83D [34 92 117 100 56 51 100 34]]
+           [0xDE03 [34 92 117 100 101 48 51 34]]]]
+    (let [input (String. (char-array [(char unit)]))]
+      (is (= escaped-units (mapv int (json/write-str input))))
+      (is (= [34 unit 34]
+             (mapv int (json/write-str input :escape-unicode false)))))))
 
 (deftest escaped-whitespace
   (is (= "foo\nbar" (json/read-str "\"foo\\nbar\"")))
@@ -287,6 +313,33 @@
 (deftest print-json-strings
   (is (= "\"Hello, World!\"" (json/write-str "Hello, World!")))
   (is (= "\"\\\"Embedded\\\" Quotes\"" (json/write-str "\"Embedded\" Quotes"))))
+
+(deftest writes-unescaped-tail-as-a-bulk-run
+  (let [counts (atom {})
+        out (CountingAppendable. (StringBuilder.) counts)]
+    (#'json/write-string "prefix\"one-long-unescaped-tail" out {})
+    (is (= "\"prefix\\\"one-long-unescaped-tail\"" (str out)))
+    ;; One range precedes the quote and one follows it. The old slow path used
+    ;; one Appendable call per character for the entire trailing run.
+    (is (= 2 (:range @counts)))
+    (is (= 4 (:char @counts)))))
+
+(deftest preserves-string-escape-boundaries
+  (let [controls (apply str (map char (range 32)))]
+    (is (= (str "\"prefix\\\"\\\\\\/"
+                "\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007"
+                "\\b\\t\\n\\u000b\\f\\r"
+                "\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015"
+                "\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d"
+                "\\u001e\\u001fsuffix\"")
+           (json/write-str (str "prefix\"\\/" controls "suffix"))))
+    (is (= "\"a/b/c\"" (json/write-str "a/b/c" :escape-slash false)))
+    (is (= "\"a\u1234\u2028\u2029😃z\""
+           (json/write-str "a\u1234\u2028\u2029😃z"
+                           :escape-unicode false
+                           :escape-js-separators false)))
+    (is (= "\"a\\u1234\\u2028\\u2029\\ud83d\\ude03z\""
+           (json/write-str "a\u1234\u2028\u2029😃z")))))
 
 (deftest print-unicode
   (is (= "\"\\u1234\\u4567\"" (json/write-str "\u1234\u4567"))))

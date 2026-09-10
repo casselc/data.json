@@ -29,6 +29,48 @@
 (defn json-data [size]
   (slurp (str "dev-resources/json" size ".json")))
 
+(defn- percentile [ordered-samples proportion]
+  (nth ordered-samples
+       (dec (long (Math/ceil (* proportion (count ordered-samples)))))))
+
+(defn- bench-string-encoding [label input warmups iterations]
+  (dotimes [_ warmups]
+    (json/write-str input))
+  (let [wall-start (System/nanoTime)
+        samples (loop [remaining iterations, timings []]
+                  (if (zero? remaining)
+                    timings
+                    (let [started (System/nanoTime)]
+                      (json/write-str input)
+                      (recur (dec remaining)
+                             (conj timings (- (System/nanoTime) started))))))
+        wall-total (- (System/nanoTime) wall-start)
+        sample-total (reduce + samples)
+        ordered (vec (sort samples))]
+    {:scenario label
+     :input-chars (count input)
+     :warmups warmups
+     :iterations iterations
+     :p50-ns (percentile ordered 0.50)
+     :p95-ns (percentile ordered 0.95)
+     :sample-total-ns sample-total
+     :wall-total-ns wall-total
+     :chars-per-second
+     (long (/ (* 1000000000.0 (count input) iterations) sample-total))}))
+
+(defn write-string-runs-bench []
+  (let [plain-tail (apply str (repeat 8192 "a"))
+        one-escape (str "\"" plain-tail)
+        mixed-escapes (apply str
+                             (repeat 1024 "segment/with\\escape\"and-tail-"))]
+    (prn {:benchmark :write-string-runs
+          :runtime {:clojure-version (clojure-version)
+                    :java-version (System/getProperty "java.version")}
+          :results [(bench-string-encoding :one-escape-long-plain-tail
+                                           one-escape 20 200)
+                    (bench-string-encoding :representative-mixed-escapes
+                                           mixed-escapes 10 80)]})))
+
 (defn do-read-bench [size]
   (let [json (json-data size)]
     (println "Results for"  size "json:")
@@ -161,3 +203,10 @@
     (println (with-out-str (quick-bench (jsonista/read-value json))))
     (println "jsoniter:")
     (println (with-out-str (quick-bench (.read (JsonIterator/parse ^String json)))))))
+
+(defn -main [& [benchmark]]
+  (case benchmark
+    "string-runs" (write-string-runs-bench)
+    (throw (ex-info "Unknown benchmark"
+                    {:benchmark benchmark
+                     :available ["string-runs"]}))))

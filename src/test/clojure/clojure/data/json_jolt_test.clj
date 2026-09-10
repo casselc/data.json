@@ -4,6 +4,23 @@
 
 (def ^:private failures (atom 0))
 
+(deftype CountingAppendable [^StringBuilder builder counts]
+  Appendable
+  (^Appendable append [this ^char c]
+    (swap! counts update :char (fnil inc 0))
+    (.append builder c)
+    this)
+  (^Appendable append [this ^CharSequence chars]
+    (swap! counts update :sequence (fnil inc 0))
+    (.append builder chars)
+    this)
+  (^Appendable append [this ^CharSequence chars ^int start ^int end]
+    (swap! counts update :range (fnil inc 0))
+    (.append builder chars start end)
+    this)
+  Object
+  (toString [_] (.toString builder)))
+
 (defn- check [label expected actual]
   (if (= expected actual)
     (println "  ok  " label)
@@ -43,6 +60,12 @@
          {"key-😃" ["value-😃" 0 true nil]}
          (json/read-str
           (json/write-str {"key-😃" ["value-😃" 0 true nil]})))
+  (let [counts (atom {})
+        out (CountingAppendable. (StringBuilder.) counts)]
+    (#'json/write-string "prefix\"one-long-unescaped-tail" out {})
+    (check "unescaped tail is appended as one bulk run"
+           ["\"prefix\\\"one-long-unescaped-tail\"" {:char 4 :range 2}]
+           [(str out) @counts]))
   (check "unpaired high surrogate is rejected"
          true
          (thrown?* #(json/read-str "\"\\ud83d\"")))
@@ -50,6 +73,6 @@
          true
          (thrown?* #(json/read-str "\"\\ude03\"")))
   (if (zero? @failures)
-    (println "all 10 checks passed")
+    (println "all 11 checks passed")
     (throw (ex-info "Jolt data.json compatibility failures"
                     {:failures @failures}))))

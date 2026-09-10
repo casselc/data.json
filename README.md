@@ -153,6 +153,8 @@ Change Log
 * Unreleased
   * Jolt: preserve JSON string behavior on scalar-indexed hosts and make the
     pinned time provider a runtime dependency
+  * Perf: append unescaped string runs in bulk after the first JSON escape
+    ([chucklehead-dev/jolt-aspect-packs#120](https://github.com/chucklehead-dev/jolt-aspect-packs/issues/120))
 * Release [2.5.2] on 2026-Jan-02
   * Update to latest parent pom and Clojure 1.11.4
   * Fix: [DJSON-56] During `read`, better error messages for chars < 32
