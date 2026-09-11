@@ -15,6 +15,7 @@
     this)
   (^Appendable append [this ^CharSequence chars ^int start ^int end]
     (swap! counts update :range (fnil inc 0))
+    (swap! counts update :ranges (fnil conj []) [start end])
     (.append builder chars start end)
     this)
   Object
@@ -323,6 +324,25 @@
     ;; one Appendable call per character for the entire trailing run.
     (is (= 2 (:range @counts)))
     (is (= 4 (:char @counts)))))
+
+(deftest avoids-empty-range-before-leading-escape
+  (let [counts (atom {})
+        out (CountingAppendable. (StringBuilder.) counts)]
+    (#'json/write-string "\"one-long-unescaped-tail" out {})
+    (is (= "\"\\\"one-long-unescaped-tail\"" (str out)))
+    (is (= {:char 4 :range 1}
+           (select-keys @counts [:char :range])))
+    (is (not-any? (fn [[start end]] (= start end)) (:ranges @counts)))))
+
+(deftest writes-unescaped-astral-jvm-run-in-bulk
+  (let [counts (atom {})
+        out (CountingAppendable. (StringBuilder.) counts)]
+    (#'json/write-string "\"left😃right" out {:escape-unicode false})
+    (is (= "\"\\\"left😃right\"" (str out)))
+    ;; JVM CharSequence indexes the supplementary scalar as two UTF-16 units.
+    (is (= [[1 12]] (:ranges @counts)))
+    (is (= {:char 4 :range 1}
+           (select-keys @counts [:char :range])))))
 
 (deftest preserves-string-escape-boundaries
   (let [controls (apply str (map char (range 32)))]

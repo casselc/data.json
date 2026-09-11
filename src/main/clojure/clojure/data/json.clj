@@ -709,7 +709,8 @@
                    (zero? (aget decoder cp)))
             (recur (unchecked-inc i))
             (do
-              (.append out s 0 i)
+              (when (pos? i)
+                (.append out s 0 i))
               (slow-write-string (.subSequence s i l) out options))))))
     (.append out \")))
 

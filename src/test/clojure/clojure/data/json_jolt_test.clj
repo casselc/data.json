@@ -16,6 +16,7 @@
     this)
   (^Appendable append [this ^CharSequence chars ^int start ^int end]
     (swap! counts update :range (fnil inc 0))
+    (swap! counts update :ranges (fnil conj []) [start end])
     (.append builder chars start end)
     this)
   Object
@@ -65,6 +66,12 @@
     (#'json/write-string "prefix\"one-long-unescaped-tail" out {})
     (check "unescaped tail is appended as one bulk run"
            ["\"prefix\\\"one-long-unescaped-tail\"" {:char 4 :range 2}]
+           [(str out) (select-keys @counts [:char :range])]))
+  (let [counts (atom {})
+        out (CountingAppendable. (StringBuilder.) counts)]
+    (#'json/write-string "\"left😃right" out {:escape-unicode false})
+    (check "unescaped astral scalar stays inside one scalar-indexed bulk run"
+           ["\"\\\"left😃right\"" {:char 4 :range 1 :ranges [[1 11]]}]
            [(str out) @counts]))
   (check "unpaired high surrogate is rejected"
          true
@@ -73,6 +80,6 @@
          true
          (thrown?* #(json/read-str "\"\\ude03\"")))
   (if (zero? @failures)
-    (println "all 11 checks passed")
+    (println "all 12 checks passed")
     (throw (ex-info "Jolt data.json compatibility failures"
                     {:failures @failures}))))
