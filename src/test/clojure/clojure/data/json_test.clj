@@ -111,10 +111,16 @@
   (is (= " \u0beb " (json/read-str "\" \\u0bEb \""))))
 
 (deftest unicode-outside-bmp
+  (is (= "\uD83D\uDE03" (json/read-str "\"\\ud83d\\ude03\"")))
   (is (= "\"smiling face: \uD83D\uDE03\""
          (json/write-str "smiling face: \uD83D\uDE03" :escape-unicode false)))
   (is (= "\"smiling face: \\ud83d\\ude03\""
-         (json/write-str "smiling face: \uD83D\uDE03" :escape-unicode true))))
+         (json/write-str "smiling face: \uD83D\uDE03" :escape-unicode true)))
+  ;; data.json has historically represented each JSON \uXXXX as one JVM UTF-16
+  ;; code unit, including isolated surrogates. The Jolt compatibility path must
+  ;; not change that behavior for existing JVM consumers.
+  (is (= "\uD83D" (json/read-str "\"\\ud83d\"")))
+  (is (= "\uDE03" (json/read-str "\"\\ude03\""))))
 
 (deftest escaped-whitespace
   (is (= "foo\nbar" (json/read-str "\"foo\\nbar\"")))

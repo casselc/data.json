@@ -1,2 +1,10 @@
 {:paths ["src/main/clojure"]
- :deps {org.clojure/clojure {:mvn/version "1.11.4"}}}
+ :deps {org.clojure/clojure {:mvn/version "1.11.4"}
+        jolt-lang/time
+        {:git/url "https://github.com/chucklehead-dev/time.git"
+         :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}}
+
+ :aliases
+ {:jolt-test
+  {:extra-paths ["src/test/clojure"]
+   :main-opts ["-m" "clojure.data.json-jolt-test"]}}}
