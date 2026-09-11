@@ -150,6 +150,9 @@ Developer Information
 Change Log
 ----------------------------------------
 
+* Unreleased
+  * Jolt: preserve JSON string behavior on scalar-indexed hosts and make the
+    pinned time provider a runtime dependency
 * Release [2.5.2] on 2026-Jan-02
   * Update to latest parent pom and Clojure 1.11.4
   * Fix: [DJSON-56] During `read`, better error messages for chars < 32
