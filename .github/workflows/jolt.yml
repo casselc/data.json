@@ -28,17 +28,9 @@ jobs:
         run: mvn -ntp -B -Dclojure.version=1.11.4 clean test
 
   jolt:
-    name: Jolt ${{ matrix.version }} (Linux x86_64)
+    name: Jolt 0.8.3 (Linux x86_64)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - version: "0.5.20"
-            sha256: aa8b4e8a831f5216aa9499cfdcaa151133b4e14ac30f23bc3410114f6d2f989d
-          - version: "0.8.3"
-            sha256: e567297a6a840d9988a1aa082beb430aeaa0e6610a82a6f9ee0564e117745147
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -49,15 +41,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y liblz4-1 zlib1g libtinfo6
 
-      - name: Install pinned Jolt ${{ matrix.version }}
+      - name: Install pinned Jolt 0.8.3
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/jolt-v${{ matrix.version }}-x86_64-linux.tar.gz"
+          archive="$RUNNER_TEMP/jolt-v0.8.3-x86_64-linux.tar.gz"
           curl -fsSL \
-            "https://github.com/jolt-lang/jolt/releases/download/v${{ matrix.version }}/jolt-v${{ matrix.version }}-x86_64-linux.tar.gz" \
+            https://github.com/jolt-lang/jolt/releases/download/v0.8.3/jolt-v0.8.3-x86_64-linux.tar.gz \
             -o "$archive"
-          echo "${{ matrix.sha256 }}  $archive" \
+          echo "e567297a6a840d9988a1aa082beb430aeaa0e6610a82a6f9ee0564e117745147  $archive" \
             | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/jolt"
           tar xzf "$archive" -C "$RUNNER_TEMP/jolt" --strip-components=1
