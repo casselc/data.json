@@ -2,10 +2,13 @@
   (:require [cheshire.core :as cheshire]
             [clj-async-profiler.core :as prof]
             [clojure.data.json :as json]
+            [clojure.java.shell :as shell]
             [criterium.core :refer :all]
             [jsonista.core :as jsonista]
             [clojure.string :as str])
-  (:import com.jsoniter.JsonIterator))
+  (:import [com.jsoniter JsonIterator]
+           [java.lang.management ManagementFactory]
+           [java.security MessageDigest]))
 
 (defmacro profiling [times & body]
   `(try
@@ -28,6 +31,148 @@
 
 (defn json-data [size]
   (slurp (str "dev-resources/json" size ".json")))
+
+(defn- percentile [ordered-samples proportion]
+  (nth ordered-samples
+       (dec (long (Math/ceil (* proportion (count ordered-samples)))))))
+
+(defn- utf8-size [^String value]
+  (alength (.getBytes value "UTF-8")))
+
+(defn- sha-256 [^String value]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                        (.getBytes value "UTF-8"))]
+    (apply str (map #(format "%02x" (bit-and 0xff %)) digest))))
+
+(defn- sample-summary [samples]
+  (let [ordered (vec (sort samples))]
+    {:min (first ordered)
+     :p50 (percentile ordered 0.50)
+     :max (peek ordered)}))
+
+(defn- bench-string-encoding
+  [label input expected-output warmups iterations trial]
+  (dotimes [_ warmups]
+    (json/write-str input))
+  (let [expected-code-units (.length ^String expected-output)
+        expected-hash (.hashCode ^String expected-output)
+        input-bytes (utf8-size input)
+        output-bytes (utf8-size expected-output)
+        wall-start (System/nanoTime)
+        {:keys [samples blackhole]}
+        (loop [remaining iterations, timings [], blackhole (long 0)]
+                  (if (zero? remaining)
+                    {:samples timings :blackhole blackhole}
+                    (let [started (System/nanoTime)
+                          encoded (json/write-str input)
+                          elapsed (- (System/nanoTime) started)
+                          actual-code-units (.length ^String encoded)
+                          actual-hash (.hashCode ^String encoded)]
+                      (when-not (and (= expected-code-units actual-code-units)
+                                     (= expected-hash actual-hash)
+                                     (= expected-output encoded))
+                        (throw (ex-info "String benchmark output changed"
+                                        {:scenario label :trial trial
+                                         :expected-code-units expected-code-units
+                                         :actual-code-units actual-code-units
+                                         :expected-hash expected-hash
+                                         :actual-hash actual-hash})))
+                      (recur (dec remaining)
+                             (conj timings elapsed)
+                             (unchecked-add blackhole
+                                            (long (+ actual-code-units
+                                                     actual-hash)))))))
+        wall-total (- (System/nanoTime) wall-start)
+        sample-total (reduce + samples)
+        ordered (vec (sort samples))
+        seconds (/ (double sample-total) 1000000000.0)
+        mebibytes 1048576.0]
+    {:scenario label
+     :trial trial
+     :input-code-units (.length ^String input)
+     :input-utf8-bytes input-bytes
+     :output-code-units expected-code-units
+     :output-utf8-bytes output-bytes
+     :warmups warmups
+     :iterations iterations
+     :p50-ns (percentile ordered 0.50)
+     :p95-ns (percentile ordered 0.95)
+     :p99-ns (percentile ordered 0.99)
+     :max-ns (peek ordered)
+     :sample-total-ns sample-total
+     :wall-total-ns wall-total
+     :input-code-units-per-second
+     (long (/ (* (.length ^String input) iterations) seconds))
+     :input-mib-per-second (/ (* input-bytes iterations) mebibytes seconds)
+     :output-mib-per-second (/ (* output-bytes iterations) mebibytes seconds)
+     :blackhole blackhole}))
+
+(defn- benchmark-scenario [label input warmups iterations trials]
+  (let [expected-output (json/write-str input)
+        _calibration (bench-string-encoding label input expected-output
+                                            warmups iterations 0)
+        results (mapv #(bench-string-encoding label input expected-output
+                                              warmups iterations %)
+                      (range 1 (inc trials)))]
+    {:scenario label
+     :discarded-calibration-trials 1
+     :expected-output {:code-units (.length ^String expected-output)
+                       :utf8-bytes (utf8-size expected-output)
+                       :sha-256 (sha-256 expected-output)}
+     :trials results
+     :trial-summary
+     {:p50-ns (sample-summary (mapv :p50-ns results))
+      :sample-total-ns (sample-summary (mapv :sample-total-ns results))
+      :input-mib-per-second (sample-summary (mapv :input-mib-per-second results))
+      :output-mib-per-second (sample-summary
+                              (mapv :output-mib-per-second results))}}))
+
+(defn- git-output [& args]
+  (let [{:keys [exit out]} (apply shell/sh "git" args)]
+    (when (zero? exit) (str/trim out))))
+
+(def ^:private safe-jvm-argument-prefixes
+  ["-Xms" "-Xmx" "-XX:" "-Dfile.encoding=" "-Djava.io.tmpdir="])
+
+(defn- safe-jvm-arguments []
+  (filterv (fn [argument]
+             (some #(str/starts-with? argument %)
+                   safe-jvm-argument-prefixes))
+           (.getInputArguments (ManagementFactory/getRuntimeMXBean))))
+
+(defn- runtime-metadata []
+  (let [status (git-output "status" "--porcelain")]
+    {:clojure-version (clojure-version)
+     :java-version (System/getProperty "java.version")
+     :java-vm-name (System/getProperty "java.vm.name")
+     :java-vm-version (System/getProperty "java.vm.version")
+     :os-name (System/getProperty "os.name")
+     :os-version (System/getProperty "os.version")
+     :os-arch (System/getProperty "os.arch")
+     :available-processors (.availableProcessors (Runtime/getRuntime))
+     :maximum-heap-bytes (.maxMemory (Runtime/getRuntime))
+     :safe-java-input-arguments (safe-jvm-arguments)
+     :system-load-average
+     (.getSystemLoadAverage (ManagementFactory/getOperatingSystemMXBean))
+     :proc-loadavg (try (str/trim (slurp "/proc/loadavg"))
+                        (catch Throwable _ nil))
+     :git {:commit (git-output "rev-parse" "HEAD")
+           :tree (git-output "rev-parse" "HEAD^{tree}")
+           :branch (git-output "rev-parse" "--abbrev-ref" "HEAD")
+           :dirty? (not (str/blank? status))}}))
+
+(defn write-string-runs-bench []
+  (let [plain-tail (apply str (repeat 8192 "a"))
+        one-escape (str "\"" plain-tail)
+        mixed-escapes (apply str
+                             (repeat 1024 "segment/with\\escape\"and-tail-"))]
+    (prn {:schema-version 2
+          :benchmark :write-string-runs
+          :runtime (runtime-metadata)
+          :results [(benchmark-scenario :one-escape-long-plain-tail
+                                        one-escape 20 200 5)
+                    (benchmark-scenario :representative-mixed-escapes
+                                        mixed-escapes 10 80 5)]})))
 
 (defn do-read-bench [size]
   (let [json (json-data size)]
@@ -161,3 +306,10 @@
     (println (with-out-str (quick-bench (jsonista/read-value json))))
     (println "jsoniter:")
     (println (with-out-str (quick-bench (.read (JsonIterator/parse ^String json)))))))
+
+(defn -main [& [benchmark]]
+  (case benchmark
+    "string-runs" (write-string-runs-bench)
+    (throw (ex-info "Unknown benchmark"
+                    {:benchmark benchmark
+                     :available ["string-runs"]}))))

@@ -35,6 +35,9 @@ org.clojure/data.json {:mvn/version "2.5.2"}
 [Leiningen]: https://leiningen.org/
 [Maven]: https://maven.apache.org/
 
+Jolt runtime support requires Jolt 0.8.3 or later. JVM Clojure users do not
+need Jolt.
+
 
 Other versions:
 
@@ -151,8 +154,10 @@ Change Log
 ----------------------------------------
 
 * Unreleased
-  * Jolt: preserve JSON string behavior on scalar-indexed hosts and make the
-    pinned time provider a runtime dependency
+  * Jolt: require Jolt 0.8.3 or later, preserve JSON string behavior on
+    scalar-indexed hosts, and make the pinned time provider a runtime dependency
+  * Perf: append unescaped string runs in bulk after the first JSON escape
+    ([chucklehead-dev/jolt-aspect-packs#120](https://github.com/chucklehead-dev/jolt-aspect-packs/issues/120))
 * Release [2.5.2] on 2026-Jan-02
   * Update to latest parent pom and Clojure 1.11.4
   * Fix: [DJSON-56] During `read`, better error messages for chars < 32
