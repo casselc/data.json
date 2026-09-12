@@ -24,6 +24,9 @@
   (^long readChars [^chars buffer ^long start ^long bufflen])
   (^void unreadChar [^int c])
   (^void unreadChars [^chars buffer ^int off ^int bufflen])
+  (^String sourceString [])
+  (^long position [])
+  (^void setPosition [^long position])
   (^java.io.Reader toReader []))
 
 (deftype ReaderPBR [^PushbackReader rdr]
@@ -37,6 +40,13 @@
     (.unread rdr c))
   (unreadChars [_ buffer start bufflen]
     (.unread rdr buffer start bufflen))
+  (sourceString [_]
+    nil)
+  (position [_]
+    -1)
+  (setPosition [_ _]
+    (throw (UnsupportedOperationException.
+            "Reader-backed JSON input has no String position")))
   (toReader [_]
     rdr))
 
@@ -69,6 +79,13 @@
     nil)
   (unreadChars [_ _buffer _start bufflen]
     (set! pos (unchecked-subtract pos bufflen))
+    nil)
+  (sourceString [_]
+    s)
+  (position [_]
+    pos)
+  (setPosition [_ position]
+    (set! pos position)
     nil)
   (toReader [_]
     (StringReader. (.subSequence s pos len))))
@@ -203,29 +220,66 @@
                 (.append buffer (codepoint-string c)))
               (recur)))))))
 
+(defn- next-string-special [^String s start]
+  (let [quote (.indexOf s (int \" ) (int start))
+        escape (.indexOf s (int \\) (int start))]
+    (cond
+      (neg? quote) escape
+      (neg? escape) quote
+      :else (min quote escape))))
+
+(defn- read-quoted-string-from-string [^StringPBR stream]
+  ;; read-str already owns an immutable String. Let the host String locate the
+  ;; next quote or escape and append whole ordinary runs, rather than crossing
+  ;; the host boundary once per character after the initial 64-character block.
+  (let [s ^String (.sourceString stream)
+        len (.length s)]
+    (loop [run-start (.position stream), output nil]
+      (let [special-index (next-string-special s run-start)]
+        (if (neg? special-index)
+          (do
+            (.setPosition stream len)
+            (throw (EOFException. "JSON error (end-of-file inside string)")))
+          (let [special (int (.charAt s special-index))]
+            (.setPosition stream (unchecked-inc special-index))
+            (if (= special (int \"))
+              (if output
+                (do
+                  (.append ^StringBuilder output s
+                           (int run-start) (int special-index))
+                  (str output))
+                (.substring s (int run-start) (int special-index)))
+              (let [output (or output (StringBuilder.))]
+                (.append ^StringBuilder output s
+                         (int run-start) (int special-index))
+                (.append ^StringBuilder output (read-escaped-char stream))
+                (recur (.position stream) output)))))))))
+
 (defn- read-quoted-string [^InternalPBR stream]
   ;; Expects to be called with the head of the stream AFTER the
   ;; opening quotation mark.
-  (let [buffer ^chars (char-array 64)
-        read (.readChars stream buffer 0 64)
-        end-index (unchecked-dec-int read)]
-    (when (neg? read)
-      (throw (EOFException. "JSON error (end-of-file inside string)")))
-    (loop [i (int 0)]
-      (let [c (int (aget buffer i))]
-        (codepoint-case c
-          \" (let [off (unchecked-inc-int i)
-                   len (unchecked-subtract-int read off)]
-               (.unreadChars stream buffer off len)
-               (String. buffer 0 i))
-          \\ (let [off i
-                   len (unchecked-subtract-int read off)]
-               (.unreadChars stream buffer off len)
-               (slow-read-string stream (String. buffer 0 i)))
-          (if (= i end-index)
-            (do (.unreadChar stream c)
-                (slow-read-string stream (String. buffer 0 i)))
-            (recur (unchecked-inc-int i))))))))
+  (if (instance? StringPBR stream)
+    (read-quoted-string-from-string stream)
+    (let [buffer ^chars (char-array 64)
+          read (.readChars stream buffer 0 64)
+          end-index (unchecked-dec-int read)]
+      (when (neg? read)
+        (throw (EOFException. "JSON error (end-of-file inside string)")))
+      (loop [i (int 0)]
+        (let [c (int (aget buffer i))]
+          (codepoint-case c
+            \" (let [off (unchecked-inc-int i)
+                     len (unchecked-subtract-int read off)]
+                 (.unreadChars stream buffer off len)
+                 (String. buffer 0 i))
+            \\ (let [off i
+                     len (unchecked-subtract-int read off)]
+                 (.unreadChars stream buffer off len)
+                 (slow-read-string stream (String. buffer 0 i)))
+            (if (= i end-index)
+              (do (.unreadChar stream c)
+                  (slow-read-string stream (String. buffer 0 i)))
+              (recur (unchecked-inc-int i)))))))))
 
 (defn- read-integer [^String string]
   (if (< (count string) 18)  ; definitely fits in a Long

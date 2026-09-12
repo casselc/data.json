@@ -189,6 +189,52 @@
   (let [long-string (str/join "" (take 100 (cycle "abcde")))]
     (is (= long-string (json/read-str (str "\"" long-string "\""))))))
 
+(defn- read-result [f]
+  (try
+    {:value (f)}
+    (catch Throwable error
+      {:error-class (class error)
+       :error-message (.getMessage error)})))
+
+(deftest read-str-long-string-fast-path-is-reader-equivalent
+  (let [plain (apply str (repeat 4096 "a"))
+        boundary-values
+        (mapcat (fn [special]
+                  (map (fn [offset]
+                         (str (apply str (repeat offset "p"))
+                              special
+                              (apply str (repeat 4096 "t"))))
+                       [63 64 65]))
+                ["\"" "\\" "\n"])
+        values (concat [plain
+                        (str plain "λ" plain)
+                        (str plain "😃" plain)]
+                       boundary-values)]
+    (doseq [expected values
+            :let [encoded (json/write-str expected)]]
+      (is (= {:value expected}
+             (read-result #(json/read-str encoded))))
+      (is (= (read-result #(json/read (java.io.StringReader. encoded)))
+             (read-result #(json/read-str encoded))))))
+  (doseq [encoded [(str "\"" (apply str (repeat 4096 "a")))
+                   (str "\"" (apply str (repeat 4096 "a")) "\\")
+                   (str "\"" (apply str (repeat 4096 "a")) "\\u12")]]
+    (is (= (read-result #(json/read (java.io.StringReader. encoded)))
+           (read-result #(json/read-str encoded))))))
+
+(deftest read-str-long-string-does-not-use-scalar-reader-fallback
+  (let [encoded (json/write-str (apply str (repeat 4096 "a")))
+        original @#'json/slow-read-string
+        calls (atom 0)
+        counted (fn [& args]
+                  (swap! calls inc)
+                  (apply original args))]
+    (with-redefs-fn {#'json/slow-read-string counted}
+      #(is (= 4096 (count (json/read-str encoded)))))
+    ;; The JVM AOT test runner may direct-link this private call, while the
+    ;; focused Jolt source runner below proves both sides of the dispatch.
+    (is (zero? @calls))))
+
 (deftest disallows-non-string-keys
   (is (thrown? Exception (json/read-str "{26:\"z\""))))
 
