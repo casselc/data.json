@@ -156,6 +156,9 @@ Change Log
 * Unreleased
   * Jolt: require Jolt 0.8.3 or later, preserve JSON string behavior on
     scalar-indexed hosts, and make the pinned time provider a runtime dependency
+  * Perf: make `read-str` scan long ordinary string runs with native `String`
+    searches while preserving the existing escape and error decoder
+    ([chucklehead-dev/jolt-chdb#83](https://github.com/chucklehead-dev/jolt-chdb/issues/83))
   * Perf: append unescaped string runs in bulk after the first JSON escape
     ([chucklehead-dev/jolt-aspect-packs#120](https://github.com/chucklehead-dev/jolt-aspect-packs/issues/120))
 * Release [2.5.2] on 2026-Jan-02

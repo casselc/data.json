@@ -36,6 +36,12 @@
     false
     (catch Throwable _ true)))
 
+(defn- read-result [f]
+  (try
+    [:value (f)]
+    (catch Throwable error
+      [:error (.getMessage error)])))
+
 (defn -main [& _]
   (println "data.json scalar-indexed Jolt compatibility")
   (check "host strings are scalar-indexed" 1 (.length "😃"))
@@ -61,6 +67,53 @@
          {"key-😃" ["value-😃" 0 true nil]}
          (json/read-str
           (json/write-str {"key-😃" ["value-😃" 0 true nil]})))
+  (let [plain (apply str (repeat 4096 "a"))
+        values [plain
+                (str (apply str (repeat 63 "p")) "\"" plain)
+                (str (apply str (repeat 64 "p")) "\\" plain)
+                (str (apply str (repeat 65 "p")) "\n" plain)
+                (str plain "λ😃" plain)]]
+    (check "long read-str values match the generic Reader path"
+           (mapv (fn [value]
+                   (let [encoded (json/write-str value)]
+                     (read-result #(json/read
+                                   (java.io.StringReader. encoded)))))
+                 values)
+           (mapv (fn [value]
+                   (read-result #(json/read-str (json/write-str value))))
+                 values)))
+  (let [plain (apply str (repeat 4096 "a"))
+        malformed [(str "\"" plain)
+                   (str "\"" plain "\\")
+                   (str "\"" plain "\\u12")]]
+    (check "long malformed strings match the generic Reader errors"
+           (mapv #(read-result
+                   (fn [] (json/read (java.io.StringReader. %))))
+                 malformed)
+           (mapv #(read-result (fn [] (json/read-str %))) malformed)))
+  (let [value (str (apply str (repeat 4096 "p")) "\\\n😃tail")
+        encoded (str (json/write-str value) " remaining")
+        remaining
+        (try
+          (json/read-str encoded :extra-data-fn json/on-extra-throw-remaining)
+          nil
+          (catch clojure.lang.ExceptionInfo error
+            (:remaining (ex-data error))))]
+    (check "long read-str preserves the remaining-data position"
+           " remaining"
+           remaining))
+  (let [encoded (json/write-str (apply str (repeat 4096 "a")))
+        original @#'json/slow-read-string
+        calls (atom 0)
+        counted (fn [& args]
+                  (swap! calls inc)
+                  (apply original args))]
+    (with-redefs-fn {#'json/slow-read-string counted}
+      #(json/read-str encoded))
+    (check "long read-str bypasses the scalar Reader fallback" 0 @calls)
+    (with-redefs-fn {#'json/slow-read-string counted}
+      #(json/read (java.io.StringReader. encoded)))
+    (check "generic Reader retains the scalar fallback" true (pos? @calls)))
   (let [counts (atom {})
         out (CountingAppendable. (StringBuilder.) counts)]
     (#'json/write-string "prefix\"one-long-unescaped-tail" out {})
@@ -80,6 +133,6 @@
          true
          (thrown?* #(json/read-str "\"\\ude03\"")))
   (if (zero? @failures)
-    (println "all 12 checks passed")
+    (println "all checks passed")
     (throw (ex-info "Jolt data.json compatibility failures"
                     {:failures @failures}))))
