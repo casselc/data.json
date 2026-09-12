@@ -91,6 +91,17 @@
                    (fn [] (json/read (java.io.StringReader. %))))
                  malformed)
            (mapv #(read-result (fn [] (json/read-str %))) malformed)))
+  (let [value (str (apply str (repeat 4096 "p")) "\\\n😃tail")
+        encoded (str (json/write-str value) " remaining")
+        remaining
+        (try
+          (json/read-str encoded :extra-data-fn json/on-extra-throw-remaining)
+          nil
+          (catch clojure.lang.ExceptionInfo error
+            (:remaining (ex-data error))))]
+    (check "long read-str preserves the remaining-data position"
+           " remaining"
+           remaining))
   (let [encoded (json/write-str (apply str (repeat 4096 "a")))
         original @#'json/slow-read-string
         calls (atom 0)

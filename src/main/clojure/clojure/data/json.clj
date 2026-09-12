@@ -88,7 +88,7 @@
     (set! pos position)
     nil)
   (toReader [_]
-    (StringReader. (.subSequence s pos len))))
+    (StringReader. (.substring s pos len))))
 
 (defn- pushback-pbr
   [^PushbackReader r]

@@ -220,7 +220,14 @@
                    (str "\"" (apply str (repeat 4096 "a")) "\\")
                    (str "\"" (apply str (repeat 4096 "a")) "\\u12")]]
     (is (= (read-result #(json/read (java.io.StringReader. encoded)))
-           (read-result #(json/read-str encoded))))))
+           (read-result #(json/read-str encoded)))))
+  (let [value (str (apply str (repeat 4096 "p")) "\\\n😃tail")
+        encoded (str (json/write-str value) " remaining")]
+    (try
+      (json/read-str encoded :extra-data-fn json/on-extra-throw-remaining)
+      (is false "expected remaining data")
+      (catch clojure.lang.ExceptionInfo error
+        (is (= " remaining" (:remaining (ex-data error))))))))
 
 (deftest read-str-long-string-does-not-use-scalar-reader-fallback
   (let [encoded (json/write-str (apply str (repeat 4096 "a")))
