@@ -42,6 +42,15 @@
     (catch Throwable error
       [:error (.getMessage error)])))
 
+(defn- stringpbr-string-result [source start]
+  (let [stream (#'json/string-pbr source)]
+    (.setPosition stream start)
+    (try
+      [:value (#'json/read-quoted-string-from-string stream)
+       (.position stream)]
+      (catch Throwable error
+        [:error (.getMessage error) (.position stream)]))))
+
 (defn -main [& _]
   (println "data.json scalar-indexed Jolt compatibility")
   (check "host strings are scalar-indexed" 1 (.length "😃"))
@@ -67,6 +76,83 @@
          {"key-😃" ["value-😃" 0 true nil]}
          (json/read-str
           (json/write-str {"key-😃" ["value-😃" 0 true nil]})))
+  (let [escapes [["\\\"" "\""]
+                 ["\\\\" "\\"]
+                 ["\\/" "/"]
+                 ["\\b" (str \backspace)]
+                 ["\\f" (str \formfeed)]
+                 ["\\n" (str \newline)]
+                 ["\\r" (str \return)]
+                 ["\\t" (str \tab)]]]
+    (check "simple escapes preserve values and nonzero/boundary positions"
+           (vec
+            (for [[encoded expected] escapes
+                  start [2 63 64 65]]
+              [:value expected (+ start (count encoded) 1)]))
+           (vec
+            (for [[encoded _] escapes
+                  start [2 63 64 65]
+                  :let [source (str (apply str (repeat start "p"))
+                                    encoded "\"tail")]]
+              (stringpbr-string-result source start)))))
+  (check "Unicode, surrogate, and raw astral paths preserve final position"
+         [[:value "A" 9]
+          [:value "\nA" 11]
+          [:value "😃" 15]
+          [:value "raw-λ-😃" 10]]
+         (mapv (fn [[source start]]
+                 (stringpbr-string-result source start))
+               [["pp\\u0041\"tail" 2]
+                ["pp\\n\\u0041\"tail" 2]
+                ["pp\\ud83d\\ude03\"tail" 2]
+                ["ppraw-λ-😃\"tail" 2]]))
+    (let [fallbacks [["\\q" 4]
+                   ["\\" 3]
+                   ["\\u12" 6]
+                   ["\\n\\q" 6]]]
+    (check "malformed and EOF fallbacks retain Reader errors"
+           (mapv (fn [[body _]]
+                   (read-result #(json/read (java.io.StringReader.
+                                             (str "\"" body)))))
+                 fallbacks)
+           (mapv (fn [[body _]]
+                   (let [[tag message _]
+                         (stringpbr-string-result (str "pp" body) 2)]
+                     [tag message]))
+                 fallbacks))
+    (check "malformed and EOF fallbacks retain StringPBR positions"
+           (mapv second fallbacks)
+           (mapv (fn [[body _]]
+                   (nth (stringpbr-string-result (str "pp" body) 2) 2))
+                 fallbacks)))
+  (let [simple-body (apply str ["\\\"" "\\\\" "\\/" "\\b"
+                                "\\f" "\\n" "\\r" "\\t"])
+        simple-encoded (str "\"" simple-body "\"")
+        original @#'json/read-escaped-char
+        calls (atom 0)
+        counted (fn [& args]
+                  (swap! calls inc)
+                  (apply original args))]
+    (with-redefs-fn {#'json/read-escaped-char counted}
+      #(json/read-str simple-encoded))
+    (check "StringPBR simple escapes avoid per-escape Reader decoding" 0 @calls)
+    (reset! calls 0)
+    (with-redefs-fn {#'json/read-escaped-char counted}
+      #(json/read (java.io.StringReader. simple-encoded)))
+    (check "ReaderPBR simple escapes retain per-escape Reader decoding" 8 @calls)
+    (reset! calls 0)
+    (with-redefs-fn {#'json/read-escaped-char counted}
+      #(json/read-str "\"\\u0041\""))
+    (check "StringPBR Unicode retains the shared escape decoder" 1 @calls)
+    (doseq [[label encoded]
+            [["invalid escape" "\"\\q"]
+             ["escape EOF" "\"\\"]]]
+      (reset! calls 0)
+      (try
+        (with-redefs-fn {#'json/read-escaped-char counted}
+          #(json/read-str encoded))
+        (catch Throwable _ nil))
+      (check (str "StringPBR " label " retains shared decoder") 1 @calls)))
   (let [plain (apply str (repeat 4096 "a"))
         values [plain
                 (str (apply str (repeat 63 "p")) "\"" plain)
