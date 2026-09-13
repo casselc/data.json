@@ -228,6 +228,23 @@
       (neg? escape) quote
       :else (min quote escape))))
 
+(defn- simple-escaped-string [^long c]
+  ;; Keep the String-backed reader's common escapes on its local cursor.  The
+  ;; returned constants avoid constructing one single-character String per
+  ;; escape; Unicode and invalid/EOF inputs deliberately remain on the shared
+  ;; decoder below so their established errors and host string semantics stay
+  ;; in one place.
+  (codepoint-case c
+    \" "\""
+    \\ "\\"
+    \/ "/"
+    \b "\b"
+    \f "\f"
+    \n "\n"
+    \r "\r"
+    \t "\t"
+    nil))
+
 (defn- read-quoted-string-from-string [^StringPBR stream]
   ;; read-str already owns an immutable String. Let the host String locate the
   ;; next quote or escape and append whole ordinary runs, rather than crossing
@@ -241,19 +258,37 @@
             (.setPosition stream len)
             (throw (EOFException. "JSON error (end-of-file inside string)")))
           (let [special (int (.charAt s special-index))]
-            (.setPosition stream (unchecked-inc special-index))
             (if (= special (int \"))
-              (if output
-                (do
-                  (.append ^StringBuilder output s
-                           (int run-start) (int special-index))
-                  (str output))
-                (.substring s (int run-start) (int special-index)))
+              (do
+                ;; The public reader position is observable through remaining
+                ;; data and through failures.  Synchronize it before returning,
+                ;; while avoiding two mutable-reader calls per simple escape.
+                (.setPosition stream (unchecked-inc special-index))
+                (if output
+                  (do
+                    (.append ^StringBuilder output s
+                             (int run-start) (int special-index))
+                    (str output))
+                  (.substring s (int run-start) (int special-index))))
               (let [output (or output (StringBuilder.))]
                 (.append ^StringBuilder output s
                          (int run-start) (int special-index))
-                (.append ^StringBuilder output (read-escaped-char stream))
-                (recur (.position stream) output)))))))))
+                (let [escape-index (long (unchecked-inc special-index))
+                      escaped
+                      (when (< escape-index len)
+                        (simple-escaped-string
+                         (int (.charAt s escape-index))))]
+                  (if escaped
+                    (do
+                      (.append ^StringBuilder output escaped)
+                      (recur (unchecked-inc escape-index) output))
+                    (do
+                      ;; Unicode, invalid escapes, and EOF retain the original
+                      ;; decoder and its exact position/error behavior.
+                      (.setPosition stream escape-index)
+                      (.append ^StringBuilder output
+                               (read-escaped-char stream))
+                      (recur (.position stream) output))))))))))))
 
 (defn- read-quoted-string [^InternalPBR stream]
   ;; Expects to be called with the head of the stream AFTER the

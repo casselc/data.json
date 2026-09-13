@@ -196,6 +196,57 @@
       {:error-class (class error)
        :error-message (.getMessage error)})))
 
+(defn- stringpbr-string-result [source start]
+  (let [stream (#'json/string-pbr source)]
+    (.setPosition stream start)
+    (try
+      {:value (#'json/read-quoted-string-from-string stream)
+       :position (.position stream)}
+      (catch Throwable error
+        {:error-class (class error)
+         :error-message (.getMessage error)
+         :position (.position stream)}))))
+
+(deftest read-str-simple-escapes-use-local-cursor
+  (let [escapes [["\\\"" "\""]
+                 ["\\\\" "\\"]
+                 ["\\/" "/"]
+                 ["\\b" (str \backspace)]
+                 ["\\f" (str \formfeed)]
+                 ["\\n" (str \newline)]
+                 ["\\r" (str \return)]
+                 ["\\t" (str \tab)]]]
+    (doseq [[encoded expected] escapes
+            start [2 63 64 65]
+            :let [prefix (apply str (repeat start "p"))
+                  source (str prefix encoded "\"tail")
+                  closing-position (+ start (count encoded) 1)]]
+      (is (= {:value expected :position closing-position}
+             (stringpbr-string-result source start))))))
+
+(deftest read-str-fallbacks-preserve-errors-and-position
+  (doseq [[body expected-position]
+          [["\\q" 4]
+           ["\\" 3]
+           ["\\u12" 6]
+           ["\\n\\q" 6]]
+          :let [source (str "pp" body)
+                encoded (str "\"" body)
+                string-result (stringpbr-string-result source 2)
+                reader-result (read-result
+                               #(json/read (java.io.StringReader. encoded)))]]
+    (is (= (select-keys reader-result [:error-class :error-message])
+           (select-keys string-result [:error-class :error-message])))
+    (is (= expected-position (:position string-result))))
+  (doseq [[source start expected]
+          [["pp\\u0041\"tail" 2 "A"]
+           ["pp\\n\\u0041\"tail" 2 "\nA"]
+           ["pp\\ud83d\\ude03\"tail" 2 "\uD83D\uDE03"]
+           ["ppraw-λ-😃\"tail" 2 "raw-λ-😃"]]]
+    (is (= {:value expected
+            :position (inc (.indexOf ^String source "\"" start))}
+           (stringpbr-string-result source start)))))
+
 (deftest read-str-long-string-fast-path-is-reader-equivalent
   (let [plain (apply str (repeat 4096 "a"))
         boundary-values

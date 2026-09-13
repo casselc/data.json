@@ -156,6 +156,9 @@ Change Log
 * Unreleased
   * Jolt: require Jolt 0.8.3 or later, preserve JSON string behavior on
     scalar-indexed hosts, and make the pinned time provider a runtime dependency
+  * Perf: decode ordinary escapes from `read-str`'s immutable `String` without
+    crossing the pushback-reader interface for every escaped character
+    ([chucklehead-dev/jolt-chdb#83](https://github.com/chucklehead-dev/jolt-chdb/issues/83))
   * Perf: make `read-str` scan long ordinary string runs with native `String`
     searches while preserving the existing escape and error decoder
     ([chucklehead-dev/jolt-chdb#83](https://github.com/chucklehead-dev/jolt-chdb/issues/83))
