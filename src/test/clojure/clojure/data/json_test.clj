@@ -224,6 +224,24 @@
       (is (= {:value expected :position closing-position}
              (stringpbr-string-result source start))))))
 
+(deftest read-str-string-runs-preserve-empty-and-nonempty-spans
+  ;; Leading/adjacent escapes create empty runs, while the ordinary prefixes
+  ;; and suffixes exercise the typed bulk append helper between them.
+  (doseq [[encoded expected]
+          [["\"\\n\"" "\n"]
+           ["\"a\\nb\"" "a\nb"]
+           ["\"\\n\\tb\"" "\n\tb"]
+           ["\"prefix\\nsuffix\\t\"" "prefix\nsuffix\t"]]]
+    (is (= expected (json/read-str encoded)))))
+
+(deftest append-nonempty-string-run-keeps-empty-spans-as-noops
+  (let [output (StringBuilder.)]
+    (is (identical? output
+                    (#'json/append-nonempty-string-run output "abc" 1 1)))
+    (is (= "" (str output)))
+    (#'json/append-nonempty-string-run output "abc" 1 3)
+    (is (= "bc" (str output)))))
+
 (deftest read-str-fallbacks-preserve-errors-and-position
   (doseq [[body expected-position]
           [["\\q" 4]

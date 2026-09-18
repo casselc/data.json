@@ -245,6 +245,15 @@
     \t "\t"
     nil))
 
+(defn- append-nonempty-string-run
+  [^StringBuilder output ^String s ^long start ^long end]
+  ;; Jolt has a direct StringBuilder/String append path.  In particular, a
+  ;; leading or adjacent escape has an empty run before it; preserve that no-op
+  ;; without constructing an empty substring or resolving a range append.
+  (if (< start end)
+    (.append output (.substring s (int start) (int end)))
+    output))
+
 (defn- read-quoted-string-from-string [^StringPBR stream]
   ;; read-str already owns an immutable String. Let the host String locate the
   ;; next quote or escape and append whole ordinary runs, rather than crossing
@@ -266,13 +275,12 @@
                 (.setPosition stream (unchecked-inc special-index))
                 (if output
                   (do
-                    (.append ^StringBuilder output s
-                             (int run-start) (int special-index))
+                    (append-nonempty-string-run output s
+                                                run-start special-index)
                     (str output))
                   (.substring s (int run-start) (int special-index))))
               (let [output (or output (StringBuilder.))]
-                (.append ^StringBuilder output s
-                         (int run-start) (int special-index))
+                (append-nonempty-string-run output s run-start special-index)
                 (let [escape-index (long (unchecked-inc special-index))
                       escaped
                       (when (< escape-index len)
