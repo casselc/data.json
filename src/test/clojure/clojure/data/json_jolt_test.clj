@@ -95,6 +95,20 @@
                   :let [source (str (apply str (repeat start "p"))
                                     encoded "\"tail")]]
               (stringpbr-string-result source start)))))
+  (check "StringPBR empty and nonempty ordinary runs preserve values"
+         ["\n" "a\nb" "\n\tb" "prefix\nsuffix\t"]
+         (mapv json/read-str
+               ["\"\\n\""
+                "\"a\\nb\""
+                "\"\\n\\tb\""
+                "\"prefix\\nsuffix\\t\""]))
+  (let [output (StringBuilder.)]
+    (check "StringPBR empty runs do not append a substring" ""
+           (do (#'json/append-nonempty-string-run output "abc" 1 1)
+               (str output)))
+    (check "StringPBR nonempty runs append the selected substring" "bc"
+           (do (#'json/append-nonempty-string-run output "abc" 1 3)
+               (str output))))
   (check "Unicode, surrogate, and raw astral paths preserve final position"
          [[:value "A" 9]
           [:value "\nA" 11]
