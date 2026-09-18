@@ -741,7 +741,7 @@
     shorts))
 
 (defn- slow-write-string [^CharSequence s ^Appendable out options]
-  (let [decoder codepoint-decoder
+  (let [^shorts decoder codepoint-decoder
         slash (get options :escape-slash)
         escape-js-separators (get options :escape-js-separators)
         escape-unicode (get options :escape-unicode)
@@ -787,7 +787,7 @@
           (.append out s (int run-start) (int l)))))))
 
 (defn- write-string [^CharSequence s ^Appendable out options]
-  (let [decoder codepoint-decoder
+  (let [^shorts decoder codepoint-decoder
         l (.length s)]
     (.append out \")
     (loop [i (long 0)]
