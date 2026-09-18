@@ -154,6 +154,9 @@ Change Log
 ----------------------------------------
 
 * Unreleased
+  * Jolt: use the canonical time dependency coordinate shared with the database
+    stack, avoiding duplicate time providers when both libraries are installed
+    ([chucklehead-dev/oscope#119](https://github.com/chucklehead-dev/oscope/issues/119))
   * Jolt: require Jolt 0.8.3 or later, preserve JSON string behavior on
     scalar-indexed hosts, and make the pinned time provider a runtime dependency
   * Perf: decode ordinary escapes from `read-str`'s immutable `String` without
