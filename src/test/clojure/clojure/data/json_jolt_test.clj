@@ -1,6 +1,7 @@
 (ns clojure.data.json-jolt-test
   "Focused compatibility gate for Jolt's scalar-indexed String semantics."
-  (:require [clojure.data.json :as json]))
+  (:require [clojure.data.json :as json])
+  (:import (java.io StringWriter)))
 
 (def ^:private failures (atom 0))
 
@@ -49,7 +50,12 @@
       [:value (#'json/read-quoted-string-from-string stream)
        (.position stream)]
       (catch Throwable error
-        [:error (.getMessage error) (.position stream)]))))
+      [:error (.getMessage error) (.position stream)]))))
+
+(defn- write-to-string [value & options]
+  (let [out (StringWriter.)]
+    (apply json/write value out options)
+    (.toString out)))
 
 (defn -main [& _]
   (println "data.json scalar-indexed Jolt compatibility")
@@ -76,6 +82,28 @@
          {"key-😃" ["value-😃" 0 true nil]}
          (json/read-str
           (json/write-str {"key-😃" ["value-😃" 0 true nil]})))
+  ;; The new fixed arities are deliberately a default-only optimization.  This
+  ;; closes over the raw exporter value shapes, including all default escaping,
+  ;; while the explicit-option calls retain the original variadic route.
+  (let [values ["quote\" slash/ backslash\\ newline\n nul\u0000 bmp-漢 astral-😀"
+                nil false 0 -42 9223372036854775807
+                {"text" "quote\"\\/\n漢😀"
+                 "values" [nil false 0 7]}]]
+    (check "no-options write and write-str agree over scalar and nested corpus"
+           (mapv (fn [value]
+                   (let [expected (json/write-str value :escape-unicode true
+                                                   :escape-js-separators true :escape-slash true)]
+                     [expected expected]))
+                 values)
+           (mapv (fn [value] [(json/write-str value) (write-to-string value)]) values))
+    (check "explicit write-str options retain variadic override behavior"
+           ["\"a/b漢😀\"" "\"a\\/b\\u6f22\\ud83d\\ude00\""]
+           [(json/write-str "a/b漢😀" :escape-unicode false :escape-slash false)
+            (json/write-str "a/b漢😀" :escape-unicode true :escape-slash true)])
+    (check "explicit write options retain variadic override behavior"
+           ["\"a/b漢😀\"" "\"a\\/b\\u6f22\\ud83d\\ude00\""]
+           [(write-to-string "a/b漢😀" :escape-unicode false :escape-slash false)
+            (write-to-string "a/b漢😀" :escape-unicode true :escape-slash true)]))
   (let [escapes [["\\\"" "\""]
                  ["\\\\" "\\"]
                  ["\\/" "/"]

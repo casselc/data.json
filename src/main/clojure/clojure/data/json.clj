@@ -1045,16 +1045,25 @@
     :indent boolean
 
         If true, indent json while writing (default = false)."
-  [x ^Writer writer & {:as options}]
-  (-write x writer (merge default-write-options options)))
+  ([x ^Writer writer]
+   ;; This is the overwhelmingly common public call shape.  Keeping the
+   ;; immutable defaults as-is avoids constructing an empty option map and
+   ;; merging it for every scalar written to an existing Writer.
+   (-write x writer default-write-options))
+  ([x ^Writer writer & {:as options}]
+   (-write x writer (merge default-write-options options))))
 
 (defn write-str
   "Converts x to a JSON-formatted string. Options are the same as
   write."
-  ^String [x & {:as options}]
-  (let [sw (StringWriter.)]
-    (-write x sw (merge default-write-options options))
-    (.toString sw)))
+  (^String [x]
+   (let [sw (StringWriter.)]
+     (-write x sw default-write-options)
+     (.toString sw)))
+  (^String [x & {:as options}]
+   (let [sw (StringWriter.)]
+     (-write x sw (merge default-write-options options))
+     (.toString sw))))
 
 ;;; JSON PRETTY-PRINTER
 
