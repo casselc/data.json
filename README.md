@@ -154,6 +154,9 @@ Change Log
 ----------------------------------------
 
 * Unreleased
+  * Perf: skip the default map key callback for string keys and the default
+    identity value callback while writing objects; custom callbacks retain
+    their existing behavior
   * Jolt: use the canonical time dependency coordinate shared with the database
     stack, avoiding duplicate time providers when both libraries are installed
     ([chucklehead-dev/oscope#119](https://github.com/chucklehead-dev/oscope/issues/119))

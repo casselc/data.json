@@ -822,6 +822,8 @@
 (defn- write-object [m ^Appendable out options]
   (let [key-fn (get options :key-fn)
         value-fn (get options :value-fn)
+        default-key? (identical? key-fn default-write-key-fn)
+        default-value? (identical? value-fn default-value-fn)
         indent (get options :indent)
         opts (cond-> options
                indent (update :indent-depth inc))]
@@ -831,8 +833,8 @@
     (loop [x m, have-printed-kv false]
       (when (seq x)
         (let [[k v] (first x)
-              out-key (key-fn k)
-              out-value (value-fn k v)
+              out-key (if (and default-key? (string? k)) k (key-fn k))
+              out-value (if default-value? v (value-fn k v))
               nxt (next x)]
           (when-not (string? out-key)
             (throw (Exception. "JSON object keys must be strings")))

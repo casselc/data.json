@@ -104,6 +104,34 @@
            ["\"a/b漢😀\"" "\"a\\/b\\u6f22\\ud83d\\ude00\""]
            [(write-to-string "a/b漢😀" :escape-unicode false :escape-slash false)
             (write-to-string "a/b漢😀" :escape-unicode true :escape-slash true)]))
+  (let [row (array-map "TraceId" "00/\"\\\n漢😀"
+                       :SpanId "ab" "Attributes" (array-map "k/\"" "v/\n"))
+        expected (json/write-str
+                  row
+                  :key-fn (fn [k] (if (instance? clojure.lang.Named k)
+                                    (name k) (str k)))
+                  :value-fn (fn [_ v] v))]
+    (check "default map entries keep exact escaped JSON bytes"
+           expected (json/write-str row))
+    (check "default writer to Writer keeps the same bytes"
+           expected (write-to-string row))
+    (check "custom key callback still runs for every nested key"
+           4
+           (let [calls (atom 0)]
+             (json/write-str row :key-fn (fn [k]
+                                           (swap! calls inc)
+                                           (if (instance? clojure.lang.Named k)
+                                             (name k) (str k))))
+             @calls))
+    (check "custom map callbacks still run for every key and value"
+           4
+           (let [calls (atom 0)]
+             (json/write-str row :value-fn (fn [_ v] (swap! calls inc) v))
+             @calls))
+    (check "custom value callback still omits its own sentinel"
+           "{\"keep\":2}"
+           (json/write-str (array-map "drop" nil "keep" 2)
+                           :value-fn (fn skip [_ v] (if (nil? v) skip v)))))
   (let [escapes [["\\\"" "\""]
                  ["\\\\" "\\"]
                  ["\\/" "/"]

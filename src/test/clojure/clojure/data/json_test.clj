@@ -602,6 +602,33 @@
 (deftest print-json-objects
   (is (= "{\"a\":1,\"b\":2}" (json/write-str (sorted-map :a 1 :b 2)))))
 
+(deftest default-and-custom-object-callbacks
+  (let [object (array-map "path" "a/b\n" :span-id "abc")]
+    (is (= "{\"path\":\"a\\/b\\n\",\"span-id\":\"abc\"}"
+           (json/write-str object)))
+    (let [keys-seen (atom [])
+          values-seen (atom [])]
+      (is (= "{\"custom-path\":\"a\\/b\\n\",\"custom-span-id\":\"abc\"}"
+             (json/write-str object
+                             :key-fn (fn [k]
+                                       (swap! keys-seen conj k)
+                                       (str "custom-" (if (keyword? k) (name k) k)))
+                             :value-fn (fn [k v]
+                                         (swap! values-seen conj [k v])
+                                         v))))
+      (is (= ["path" :span-id] @keys-seen))
+      (is (= [["path" "a/b\n"] [:span-id "abc"]] @values-seen)))
+    (is (= "{\"keep\":2}"
+           (json/write-str (array-map "drop" nil "keep" 2)
+                           :value-fn (fn omit-nil [_ v]
+                                       (if (nil? v) omit-nil v)))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"key-marker"
+          (json/write-str object
+                          :key-fn (fn [_] (throw (ex-info "key-marker" {}))))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"value-marker"
+          (json/write-str object
+                          :value-fn (fn [_ _] (throw (ex-info "value-marker" {}))))))))
+
 (deftest object-keys-must-be-strings
   (is (= "{\"1\":1,\"2\":2}" (json/write-str (sorted-map 1 1 2 2)))))
 
