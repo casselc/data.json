@@ -132,6 +132,25 @@
            "{\"keep\":2}"
            (json/write-str (array-map "drop" nil "keep" 2)
                            :value-fn (fn skip [_ v] (if (nil? v) skip v)))))
+  (let [object (sorted-map "a" "slash/\n" "b" (array-map "nested" true)
+                           "c" nil "d" 7)
+        keys-seen (atom [])
+        values-seen (atom [])
+        actual (json/write-str
+                object
+                :key-fn (fn [key]
+                          (swap! keys-seen conj key)
+                          (str "out-" key))
+                :value-fn (fn skip [key value]
+                            (swap! values-seen conj key)
+                            (if (nil? value) skip value)))]
+    (check "map seq reuse preserves nested key order and omitted value bytes"
+           "{\"out-a\":\"slash\\/\\n\",\"out-b\":{\"out-nested\":true},\"out-d\":7}"
+           actual)
+    (check "map seq reuse preserves key callback order"
+           ["a" "b" "nested" "c" "d"] @keys-seen)
+    (check "map seq reuse preserves value callback order"
+           ["a" "b" "nested" "c" "d"] @values-seen))
   (let [escapes [["\\\"" "\""]
                  ["\\\\" "\\"]
                  ["\\/" "/"]
