@@ -629,6 +629,26 @@
           (json/write-str object
                           :value-fn (fn [_ _] (throw (ex-info "value-marker" {}))))))))
 
+(deftest map-seq-once-preserves-object-order-and-callbacks
+  (let [object (sorted-map "a" "slash/\n" "b" (array-map "nested" true)
+                           "c" nil "d" 7)
+        keys-seen (atom [])
+        values-seen (atom [])]
+    (is (= "{\"a\":\"slash\\/\\n\",\"b\":{\"nested\":true},\"c\":null,\"d\":7}"
+           (json/write-str object)))
+    (is (= "{\"out-a\":\"slash\\/\\n\",\"out-b\":{\"out-nested\":true},\"out-d\":7}"
+           (json/write-str object
+                           :key-fn (fn [key]
+                                     (swap! keys-seen conj key)
+                                     (str "out-" key))
+                           :value-fn (fn omit-nil [key value]
+                                       (swap! values-seen conj [key value])
+                                       (if (nil? value) omit-nil value)))))
+    (is (= ["a" "b" "nested" "c" "d"] @keys-seen))
+    (is (= [["a" "slash/\n"] ["b" (array-map "nested" true)]
+            ["nested" true] ["c" nil] ["d" 7]]
+           @values-seen))))
+
 (deftest object-keys-must-be-strings
   (is (= "{\"1\":1,\"2\":2}" (json/write-str (sorted-map 1 1 2 2)))))
 

@@ -830,7 +830,9 @@
     (.append out \{)
     (when (and indent (seq m))
       (write-indent out opts))
-    (loop [x m, have-printed-kv false]
+    ;; Keep the map view once. In Jolt, seq/first/next on a map each build a
+    ;; complete entry view; iterating the seq avoids rebuilding it per object.
+    (loop [x (seq m), have-printed-kv false]
       (when (seq x)
         (let [[k v] (first x)
               out-key (if (and default-key? (string? k)) k (key-fn k))
