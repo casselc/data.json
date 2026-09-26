@@ -2,6 +2,7 @@
   "Focused source-only Jolt backend contract. Run in a fresh process."
   (:require [clojure.data.json :as json]
             [clojure.data.json.jolt-native :as native]
+            [jolt.fibers :as fibers]
             [jolt.scheme :as scheme]
             [clojure.test :refer [deftest is run-tests testing]])
   (:import (java.io StringWriter)))
@@ -84,8 +85,7 @@
 (deftest library-resource-abi-fails-before-output
   (let [writer (:writer @prepared)
         stock @#'json/native-writer-stock]
-    (doseq [bad-stock [nil [] (subvec stock 0 10)
-                      (conj stock :extra) (assoc stock 10 :wrong-version)]]
+    (doseq [bad-stock [nil [] (subvec stock 0 10) (conj stock :extra) (assoc stock 10 :wrong-version)]]
       (let [out (StringWriter.)]
         (.append out "prefix")
         (is (= [:error "data.json native writer ABI mismatch"]
@@ -253,6 +253,158 @@
                 [(writer values) @events]))]
     (is (= ["[1,2]" [:realize-first :realize-next :write-first]]
            (run portable) (run encode)))))
+
+(def ^:private observe-scratch-call
+  (delay
+    ;; Serial/fresh-process mechanism gate, like counted-native-call above.
+    ;; It observes the private call-local scratch AFTER each scalar, never adds
+    ;; an observer branch to production, and restores the binding on failure.
+    (scheme/eval-string
+      "(lambda (thunk)
+         (let ((original djn-string) (ports '()) (mu (make-mutex)))
+           (dynamic-wind
+             (lambda ()
+               (set! djn-string
+                 (lambda (value writer flags)
+                   (let ((result (original value writer flags)))
+                     (jolt-with-mutex mu
+                       (set! ports
+                         (cons (and (> (vector-length flags) 3)
+                                    (vector-ref flags 3)
+                                    (car (vector-ref flags 3))) ports)))
+                     result))))
+             (lambda ()
+               (let* ((result (jolt-invoke0 thunk))
+                      (valid (filter port? ports))
+                      (unique
+                        (let loop ((xs valid) (seen '()))
+                          (cond ((null? xs) seen)
+                                ((memq (car xs) seen) (loop (cdr xs) seen))
+                                (else (loop (cdr xs) (cons (car xs) seen)))))))
+                 (jolt-vector result (length ports) (length unique)
+                   (= (length ports) (length valid))
+                   (for-all port-closed? valid))))
+             (lambda () (set! djn-string original)))))")))
+
+(deftest scratch-reuse-extraction-and-reentrancy
+  (force prepared)
+  (let [values ["first" "" (apply str (repeat 257 "λ")) "x" "after/😀"]]
+    ;; Earlier StringWriter chunks must not mutate when the extractor is reused
+    ;; for empty, shorter, longer and Unicode strings.
+    (is (= [(portable values) 5 1 true true]
+           (@observe-scratch-call #(encode values)))))
+  (is (= ["[1,true,null]" 0 0 true true]
+         (@observe-scratch-call #(encode [1 true nil]))))
+  (let [prefix (atom nil)
+        nested (Callback. (fn [out _]
+                            (reset! prefix (.toString out))
+                            (.append out (json/write-str ["inner" ""]))))]
+    (is (= ["[\"left\",[\"inner\",\"\"],\"right\"]" 4 2 true true]
+           (@observe-scratch-call #(encode ["left" nested "right"]))))
+    (is (= "[\"left\"," @prefix))))
+
+(deftest scratch-closes-on-custom-writer-exception
+  (let [sink (atom nil)
+        fail (Callback. (fn [out _]
+                          (reset! sink out)
+                          (.append out "0")
+                          (throw (ex-info "scratch failure" {}))))]
+    (is (= [[:error "scratch failure"] 1 1 true true]
+           (@observe-scratch-call #(outcome (fn [] (encode ["first" fail]))))))
+    (is (= "[\"first\",0" (.toString @sink)))
+    (is (= ["[\"next\"]" 1 1 true true]
+           (@observe-scratch-call #(encode ["next"]))))))
+
+(deftest extracted-string-does-not-alias-later-scalars
+  (force prepared)
+  (let [probe
+        (scheme/eval-string
+          "(lambda ()
+             (let ((flags (vector #t #t #t #f)))
+               (dynamic-wind
+                 (lambda () (void))
+                 (lambda ()
+                   (let* ((a (djn-with-string-output flags
+                               (lambda (out) (put-string out \"scalar A/λ😀\"))))
+                          (first-port (car (vector-ref flags 3)))
+                          (b (djn-with-string-output flags
+                               (lambda (out) (put-string out \"B\"))))
+                          (c (djn-with-string-output flags
+                               (lambda (out) (put-string out (make-string 1025 #\\C))))))
+                     (jolt-vector a b (string-length c)
+                       (eq? first-port (car (vector-ref flags 3))))))
+                 (lambda () (close-port (car (vector-ref flags 3)))))))")]
+    (is (= ["scalar A/λ😀" "B" 1025 true] (probe)))))
+
+(deftest overlapping-calls-have-distinct-scratch
+  (force prepared)
+  (let [probe (fn []
+                (let [writer (:writer @prepared)
+                      ready-a (promise) ready-b (promise) release (promise)
+                      start (fn [label ready]
+                              (future
+                                (try
+                                  (binding [json/*experimental-native-writer* writer]
+                                    (json/write-str
+                                      [label (Callback. (fn [out _]
+                                                          (deliver ready true)
+                                                          @release
+                                                          (.append out "0")))]))
+                                  (catch Throwable error
+                                    (deliver ready false)
+                                    (throw error)))))
+                      a (start "a" ready-a) b (start "b" ready-b)]
+                  (try
+                    (is (true? @ready-a))
+                    (is (true? @ready-b))
+                    (finally (deliver release true)))
+                  ;; Join both even if either one failed.
+                  [(outcome #(deref a)) (outcome #(deref b))]))]
+    (is (= [[[:value "[\"a\",0]"] [:value "[\"b\",0]"]] 2 2 true true]
+           (@observe-scratch-call probe)))))
+
+(deftest scratch-survives-fiber-yield
+  (force prepared)
+  ;; A fiber park is not a lexical exit. In particular, a custom writer may
+  ;; yield after an earlier scalar created scratch and before a later scalar
+  ;; needs it again. Observe from the calling thread, not the yielding fiber.
+  (let [calls (atom 0)
+        prefix (atom nil)
+        callback (Callback. (fn [out _]
+                              (swap! calls inc)
+                              (reset! prefix (.toString out))
+                              (fibers/yield)
+                              (.append out "0")))]
+    (is (= ["[\"before\",0,\"after\"]" 2 1 true true]
+           (@observe-scratch-call
+            #(fibers/join
+              (fibers/spawn (fn [] (encode ["before" callback "after"])))))))
+    (is (= 1 @calls))
+    (is (= "[\"before\"," @prefix)))
+  (let [sink (atom nil)
+        callback (Callback. (fn [out _]
+                              (reset! sink out)
+                              (fibers/yield)
+                              (.append out "0")
+                              (throw (ex-info "after yield" {}))))]
+    (is (= [[:error "after yield"] 1 1 true true]
+           (@observe-scratch-call
+            #(outcome
+              (fn []
+                (fibers/join
+                 (fibers/spawn (fn [] (encode ["before" callback])))))))))
+    (is (= "[\"before\",0" (.toString @sink)))))
+
+(deftest scratch-prefix-remains-stable-across-growth
+  (let [prefix (atom nil)
+        large (apply str (repeat 65537 "x"))
+        callback (Callback. (fn [out _]
+                              (reset! prefix (.toString out))
+                              (.append out "0")))]
+    (is (= (str "[\"a\",0,\"" large "\",\"tail\"]")
+           (encode ["a" callback large "tail"])))
+    ;; This captured string must survive later extraction and scratch close.
+    (is (= "[\"a\"," @prefix))))
 
 (defn -main [& _]
   (let [result (run-tests 'clojure.data.json-native-test)]

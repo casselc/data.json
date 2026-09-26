@@ -67,6 +67,15 @@ realization order. Only boolean Unicode/slash/JavaScript-separator escape
 switches may differ from stock options; custom/unknown options use the portable
 writer before emission. No input or encoded field is cached.
 
+The scratch-port candidate lazily reuses one string port per public encoding
+call, extracts and appends each scalar immediately to the same StringWriter,
+and closes the port on success or failure. Nested/concurrent calls retain
+separate scratch state. Dispatch guards and fallback behavior are unchanged.
+A matched serial 512-row A/B/B/A comparison had overlapping timing ranges;
+scratch reuse alone has not demonstrated a stable throughput improvement.
+Cleanup uses Jolt's fiber-aware finally marker, so yielding inside a custom
+writer preserves scratch until the encoding actually returns or throws.
+
 The Scheme resource is embedded as a string at loader macro expansion and is
 evaluated only on explicit initialization. This is not a compiler-free AOT
 resource loader. Source/resource fingerprint invalidation and application-AOT

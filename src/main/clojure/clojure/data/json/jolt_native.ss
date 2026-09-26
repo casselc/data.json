@@ -19,11 +19,25 @@
   (put-char out (string-ref djn-hex (fxand (fxsra cp 4) 15)))
   (put-char out (string-ref djn-hex (fxand cp 15))))
 
+(define (djn-with-string-output flags write)
+  ;; Slot 3 belongs to this djn-write! call, not the library or a dynamic Var.
+  ;; Preserve djn-string's three-argument interface; allocate lazily, then reuse
+  ;; the port/extractor pair. Extraction resets the port after EACH scalar.
+  (let ((scratch
+          (or (vector-ref flags 3)
+              (call-with-values open-string-output-port
+                (lambda (out extract)
+                  (let ((scratch (cons out extract)))
+                    (vector-set! flags 3 scratch)
+                    scratch))))))
+    (write (car scratch))
+    ((cdr scratch))))
+
 (define (djn-string value writer flags)
   ;; Build only this scalar's escaped text, then append once to the shared
   ;; StringWriter. A callback can inspect the complete prefix immediately.
   (sb-append! writer
-    (call-with-string-output-port
+    (djn-with-string-output flags
       (lambda (out)
         (let ((size (string-length value))
               (unicode? (vector-ref flags 0))
@@ -76,8 +90,9 @@
                     (boolean? v)
                     (eq? v (pmap-fast-get defaults k pmap-absent))))) #t)
        (list->vector
-         (map (lambda (k) (pmap-fast-get options k pmap-absent))
-              djn-escape-keys))))
+         (append (map (lambda (k) (pmap-fast-get options k pmap-absent))
+                      djn-escape-keys)
+                 '(#f)))))
 
 (define (djn-write! value writer options stock)
   ;; Stock vector ABI 1, captured in json.clj immediately after registrations:
@@ -165,7 +180,14 @@
                         ;; Dates, ratios, decimals, sets, records, etc. also keep
                         ;; their actual registered implementation and options.
                         (else (jolt-invoke3 impl x writer options)))))))))
-            (emit value))))
+            (dynamic-wind
+              ;; Match Jolt finally semantics: a fiber park is not an exit.
+              ;; Raw host winders close scratch during callback yield/resume.
+              jolt-finally-in
+              (lambda () (emit value))
+              (lambda ()
+                (let ((scratch (vector-ref flags 3)))
+                  (when scratch (close-port (car scratch)))))))))
     jolt-nil))
 
 djn-write!
