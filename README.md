@@ -91,12 +91,19 @@ dynamic Var behavior require separate gates; known protocol-method redefinition
 limitations in the measured cumulative85 AOT runtime are not waived. This
 prototype is not enabled by default and makes no throughput qualification claim.
 
-After providing the pinned runtime helper, the focused source gate is
-`jolt -Srepro -Sdeps '{:paths ["src/main/clojure" "src/test/clojure"]}' -m clojure.data.json-native-test`
-(use the workspace's mandatory Chez wrapper). Explicit paths avoid the
-`:jolt-test` alias's portable-runner `:main-opts` overriding this selection.
-The existing `clojure.data.json-jolt-test` gate and
-portable/JVM suite remain required independently.
+After providing the pinned runtime helper, run the focused source gate with
+`jolt -Srepro -M:jolt-native-test` (use the workspace's mandatory Chez wrapper).
+The equivalent explicit namespace command is
+`jolt -Srepro -Sdeps '{:paths ["src/main/clojure" "src/test/jolt"]}' -m clojure.data.json-native-test`.
+Do not combine this command with `:jolt-test`: that alias selects the separate
+portable runner through its own `:main-opts`.
+
+The Jolt-only namespace lives in `src/test/jolt`, outside Maven's ordinary
+`src/test/clojure` discovery. It is not a JVM test or a skipped JVM assertion.
+The existing `jolt -Srepro -M:jolt-test` portable gate and
+`mvn -ntp -B -Dclojure.version=1.11.4 clean test` JVM suite remain required
+independently. Hosted CI currently runs those portable/JVM gates, not the
+guarded native gate; separating discovery does not qualify a native hosted lane.
 
 
 Other versions:

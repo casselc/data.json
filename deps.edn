@@ -7,4 +7,7 @@
  :aliases
  {:jolt-test
   {:extra-paths ["src/test/clojure"]
-   :main-opts ["-m" "clojure.data.json-jolt-test"]}}}
+   :main-opts ["-m" "clojure.data.json-jolt-test"]}
+  :jolt-native-test
+  {:extra-paths ["src/test/jolt"]
+   :main-opts ["-m" "clojure.data.json-native-test"]}}}
