@@ -38,6 +38,47 @@ org.clojure/data.json {:mvn/version "2.5.2"}
 Jolt runtime support requires Jolt 0.8.3 or later. JVM Clojure users do not
 need Jolt.
 
+### Experimental guarded Jolt writer (source qualification only)
+
+The portable writer remains the default. An explicit development-only binding
+can select the library-owned Chez backend without replacing `write-str` or any
+JSONWriter registration:
+
+```clojure
+(require '[clojure.data.json :as json]
+         '[clojure.data.json.jolt-native :as native])
+(binding [json/*experimental-native-writer* (native/load-writer!)]
+  (json/write-str {"message" "hello"}))
+(native/backend-info) ; reports successful load/capability, not active binding
+```
+
+This requires a compiler-bearing Jolt CLI with the runtime-owned
+`pmap-fold-seq-order` helper. The loader fails explicitly if that helper is
+missing. Ordinary JVM consumers do not load Jolt or Scheme when the opt-in is
+absent. This fork itself is not Babashka-loadable because of its pre-existing
+`definterface` reader implementation; chDB's separate native Cheshire path on
+Babashka is unchanged. `write` is unchanged.
+
+Every value checks the current `-write` Var root and resolves JSONWriter without
+a dispatch cache. Native scalar/persistent-map/vector output and custom writers
+append to the same real StringWriter. Custom values fall back once, without
+restarting their row. Lazy sequences remain entirely portable to retain
+realization order. Only boolean Unicode/slash/JavaScript-separator escape
+switches may differ from stock options; custom/unknown options use the portable
+writer before emission. No input or encoded field is cached.
+
+The Scheme resource is embedded as a string at loader macro expansion and is
+evaluated only on explicit initialization. This is not a compiler-free AOT
+resource loader. Source/resource fingerprint invalidation and application-AOT
+dynamic Var behavior require separate gates; known protocol-method redefinition
+limitations in the measured cumulative85 AOT runtime are not waived. This
+prototype is not enabled by default and makes no throughput qualification claim.
+
+After providing the pinned runtime helper, the focused source gate is
+`jolt -A:jolt-test -M -m clojure.data.json-native-test` (use the workspace's
+mandatory Chez wrapper). The existing `clojure.data.json-jolt-test` gate and
+portable/JVM suite remain required independently.
+
 
 Other versions:
 
