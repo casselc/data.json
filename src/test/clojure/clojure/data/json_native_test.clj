@@ -92,6 +92,106 @@
                (outcome #(writer ["value"] out json/default-write-options bad-stock))))
         (is (= "prefix" (.toString out)))))))
 
+(def ^:private counted-option-flags
+  (delay
+    ;; Observe only djn-flags' validation fold, outside emission. Like the
+    ;; existing native-call observer, this is serial/fresh-process test code.
+    (scheme/eval-string
+      "(lambda (options defaults)
+         (let ((original pmap-fold-fwd) (folds 0) (visits 0))
+           (dynamic-wind
+             (lambda ()
+               (set! pmap-fold-fwd
+                 (lambda (m step seed)
+                   (set! folds (+ folds 1))
+                   (original m
+                     (lambda (k v acc)
+                       (set! visits (+ visits 1))
+                       (step k v acc)) seed))))
+             (lambda ()
+               (let ((flags (djn-flags options defaults))
+                     (show (lambda (v)
+                             (if (eq? v pmap-absent) (keyword #f \"absent\") v))))
+                 (jolt-vector
+                   (if flags
+                       (jolt-vector (show (vector-ref flags 0))
+                                    (show (vector-ref flags 1))
+                                    (show (vector-ref flags 2))
+                                    (eq? (vector-ref flags 3) #f))
+                       jolt-nil)
+                   folds visits)))
+             (lambda () (set! pmap-fold-fwd original)))))")))
+
+(deftest stock-options-identity-bypasses-validation-fold
+  (force prepared)
+  (let [defaults (nth @#'json/native-writer-stock 9)
+        equal-copy (assoc (dissoc defaults :indent) :indent false)]
+    (is (identical? json/default-write-options defaults))
+    (is (= defaults equal-copy))
+    (is (not (identical? defaults equal-copy)))
+    (is (= [[true true true true] 0 0]
+           (@counted-option-flags defaults defaults)))
+    ;; Positive control: an equal map must still use all ten validation steps.
+    (is (= [[true true true true] 1 10]
+           (@counted-option-flags equal-copy defaults)))
+    (let [fresh (scheme/eval-string
+                  "(lambda (options)
+                     (let ((a (djn-flags options options))
+                           (b (djn-flags options options)))
+                       (vector-set! a 0 #f)
+                       (vector-set! a 3 'test-scratch)
+                       (jolt-vector (eq? a b) (vector-ref b 0)
+                         (eq? (vector-ref b 3) #f))))")]
+      (is (= [false true true] (fresh defaults))))))
+
+(deftest identity-flags-preserve-malformed-default-behavior
+  (force prepared)
+  (let [stock @#'json/native-writer-stock
+        defaults (nth stock 9)]
+    (doseq [unicode? [false true] slash? [false true] js? [false true]]
+      (let [options (assoc defaults :escape-unicode unicode?
+                                   :escape-slash slash? :escape-js-separators js?)]
+        (is (= [[unicode? slash? js? true] 0 0]
+               (@counted-option-flags options options)))))
+    (doseq [key [:escape-unicode :escape-slash :escape-js-separators]
+            bad [nil 0 "true"]]
+      (let [options (assoc defaults key bad)]
+        ;; Rejection comes from the unchanged old guard, not a new contract.
+        (is (= [nil 1 10] (@counted-option-flags options options)))
+        (is (= [nil 1 10] (@counted-option-flags options defaults)))))
+    (doseq [[index key] (map-indexed vector [:escape-unicode :escape-slash
+                                           :escape-js-separators])]
+      (let [missing (dissoc defaults key)
+            out (StringWriter.)]
+        ;; Manually forged defaults previously retained the missing sentinel.
+        ;; These are compatibility assertions, not new rejection assertions.
+        (is (= [(assoc [true true true true] index :absent) 1 9]
+               (@counted-option-flags missing missing)))
+        ((:writer @prepared) "/λ\u2028" out missing (assoc stock 9 missing))
+        (is (= "\"\\/\\u03bb\\u2028\"" (.toString out)))))
+    (doseq [bad [nil 7 "not a map"]]
+      (is (= [nil 0 0] (@counted-option-flags bad bad))))
+    (is (= [nil 0 0]
+           (@counted-option-flags (assoc defaults :unknown true) defaults)))))
+
+(deftest rebound-default-options-retain-portable-callbacks
+  (force prepared)
+  (let [defaults json/default-write-options
+        text "/λ\u2028"]
+    (with-redefs [json/default-write-options
+                  (assoc defaults :escape-unicode false :escape-slash false
+                                  :escape-js-separators false)]
+      (is (= (str "\"" text "\"") (portable text) (encode text))))
+    (let [events (atom [])
+          key-fn (fn [key] (swap! events conj [:key key]) (name key))
+          value-fn (fn [key value] (swap! events conj [:value key value]) (inc value))]
+      (with-redefs [json/default-write-options
+                    (assoc defaults :key-fn key-fn :value-fn value-fn)]
+        (is (= ["{\"a\":2}" 0]
+               (@counted-native-call #(encode (array-map :a 1)))))
+        (is (= [[:key :a] [:value :a 1]] @events))))
+    (is (identical? defaults json/default-write-options))))
+
 (deftest stock-float-and-date-success
   (doseq [[label value expected]
           [[:float (Float/valueOf "1.25") "1.25"]

@@ -88,7 +88,7 @@
                           (loop (next-escape next) next)))))
                   (put-char out #\")))))))))
 
-(define (djn-flags options defaults)
+(define (djn-checked-flags options defaults)
   ;; Only the three boolean escaping switches may differ. Unknown/custom
   ;; options (including callbacks) fall back BEFORE any output. Identity checks
   ;; intentionally prefer a conservative fallback over calling user equality.
@@ -104,6 +104,20 @@
          (append (map (lambda (k) (pmap-fast-get options k pmap-absent))
                       djn-escape-keys)
                  '(#f)))))
+
+(define (djn-flags options defaults)
+  (or (and (pmap? options) (eq? options defaults)
+           ;; Public write-str without options passes this captured immutable
+           ;; map. Read its actual flags; never cache the call-local scratch.
+           (let ((unicode? (pmap-fast-get options (car djn-escape-keys) pmap-absent))
+                 (slash? (pmap-fast-get options (cadr djn-escape-keys) pmap-absent))
+                 (js? (pmap-fast-get options (caddr djn-escape-keys) pmap-absent)))
+             (and (boolean? unicode?) (boolean? slash?) (boolean? js?)
+                  (vector unicode? slash? js? #f))))
+      ;; Preserve the original guard even for malformed manually supplied
+      ;; defaults: a missing escape key formerly produced an absent flag, not
+      ;; rejection. Only valid identity inputs take the shortcut above.
+      (djn-checked-flags options defaults)))
 
 (define (djn-write! value writer options stock)
   ;; Stock vector ABI 1, captured in json.clj immediately after registrations:
