@@ -286,11 +286,80 @@
                    (for-all port-closed? valid))))
              (lambda () (set! djn-string original)))))")))
 
+(def ^:private counted-scratch-call
+  (delay
+    ;; Count actual scratch emission/extraction, not just whether an earlier
+    ;; scalar allocated the call-local port. No production instrumentation.
+    (scheme/eval-string
+      "(lambda (thunk)
+         (let ((original djn-with-string-output) (calls 0))
+           (dynamic-wind
+             (lambda ()
+               (set! djn-with-string-output
+                 (lambda (flags write)
+                   (set! calls (+ calls 1))
+                   (original flags write))))
+             (lambda ()
+               (let ((result (jolt-invoke0 thunk)))
+                 (jolt-vector result calls)))
+             (lambda () (set! djn-with-string-output original)))))")))
+
+(deftest clean-strings-skip-scratch
+  (force prepared)
+  (let [value (array-map "key" ["" "ascii" :a/name 'b/name])
+        expected "{\"key\":[\"\",\"ascii\",\"name\",\"name\"]}"]
+    (is (= expected (portable value)))
+    ;; Five native string calls, no scratch port and no extraction.
+    (is (= [expected 5 0 false true]
+           (@observe-scratch-call #(encode value))))
+    (is (= [expected 0] (@counted-scratch-call #(encode value)))))
+  ;; Positive control: this same observer must see the escaping path.
+  (is (= ["\"a\\/b\"" 1] (@counted-scratch-call #(encode "a/b")))))
+
+(deftest clean-string-escape-options-matrix
+  (force prepared)
+  (doseq [unicode? [false true] slash? [false true] js? [false true]]
+    (let [options [:escape-unicode unicode? :escape-slash slash?
+                   :escape-js-separators js?]
+          cases [["" false] ["ordinary ascii" false]
+                 ["/" slash?] ["left/right" slash?]
+                 ["λ漢😀" unicode?] ["\u2028\u2029" js?]
+                 ["a\"b" true] ["a\\b" true]
+                 [(apply str (map char (range 32))) true]
+                 [(str (apply str (repeat 4097 "x")) "/end") slash?]
+                 ["/λ\u2028😀/" (or slash? unicode? js?)]]]
+      (doseq [[value escaped?] cases]
+        (let [expected (apply portable value options)]
+          ;; A positive success outcome plus exact bytes, not equal failures.
+          (is (= [:value expected]
+                 (outcome #(apply encode value options)))
+              (str (pr-str value) " " options))
+          (is (= [expected (if escaped? 1 0)]
+                 (@counted-scratch-call #(apply encode value options)))
+              (str "scratch " (pr-str value) " " options)))))))
+
+(deftest mixed-clean-and-escaped-prefix-visibility
+  (force prepared)
+  (let [seen (atom [])
+        callback (Callback. (fn [out _]
+                              (swap! seen conj [out (.toString out)])
+                              (.append out "0")))
+        value ["clean" callback "needs/escape" callback "tail"
+               "again/" "last"]]
+    ;; Later clean scalars must skip extraction even after scratch exists.
+    (is (= ["[\"clean\",0,\"needs\\/escape\",0,\"tail\",\"again\\/\",\"last\"]" 2]
+           (@counted-scratch-call #(encode value))))
+    (is (= ["[\"clean\"," "[\"clean\",0,\"needs\\/escape\","]
+           (mapv second @seen)))
+    (is (instance? StringWriter (ffirst @seen)))
+    (is (identical? (ffirst @seen) (first (second @seen))))))
+
 (deftest scratch-reuse-extraction-and-reentrancy
   (force prepared)
-  (let [values ["first" "" (apply str (repeat 257 "λ")) "x" "after/😀"]]
+  (let [values ["first/" "/" (apply str (repeat 257 "λ")) "x/" "after/😀"]]
     ;; Earlier StringWriter chunks must not mutate when the extractor is reused
-    ;; for empty, shorter, longer and Unicode strings.
+    ;; for shorter, longer and Unicode strings. Every scalar requires scratch;
+    ;; empty/clean strings have a separate no-scratch mechanism gate above.
     (is (= [(portable values) 5 1 true true]
            (@observe-scratch-call #(encode values)))))
   (is (= ["[1,true,null]" 0 0 true true]
@@ -298,10 +367,10 @@
   (let [prefix (atom nil)
         nested (Callback. (fn [out _]
                             (reset! prefix (.toString out))
-                            (.append out (json/write-str ["inner" ""]))))]
-    (is (= ["[\"left\",[\"inner\",\"\"],\"right\"]" 4 2 true true]
-           (@observe-scratch-call #(encode ["left" nested "right"]))))
-    (is (= "[\"left\"," @prefix))))
+                            (.append out (json/write-str ["inner/" "/"]))))]
+    (is (= ["[\"left\\/\",[\"inner\\/\",\"\\/\"],\"right\\/\"]" 4 2 true true]
+           (@observe-scratch-call #(encode ["left/" nested "right/"]))))
+    (is (= "[\"left\\/\"," @prefix))))
 
 (deftest scratch-closes-on-custom-writer-exception
   (let [sink (atom nil)
@@ -310,10 +379,10 @@
                           (.append out "0")
                           (throw (ex-info "scratch failure" {}))))]
     (is (= [[:error "scratch failure"] 1 1 true true]
-           (@observe-scratch-call #(outcome (fn [] (encode ["first" fail]))))))
-    (is (= "[\"first\",0" (.toString @sink)))
-    (is (= ["[\"next\"]" 1 1 true true]
-           (@observe-scratch-call #(encode ["next"]))))))
+           (@observe-scratch-call #(outcome (fn [] (encode ["first/" fail]))))))
+    (is (= "[\"first\\/\",0" (.toString @sink)))
+    (is (= ["[\"next\\/\"]" 1 1 true true]
+           (@observe-scratch-call #(encode ["next/"]))))))
 
 (deftest extracted-string-does-not-alias-later-scalars
   (force prepared)
@@ -353,14 +422,14 @@
                                   (catch Throwable error
                                     (deliver ready false)
                                     (throw error)))))
-                      a (start "a" ready-a) b (start "b" ready-b)]
+                      a (start "a/" ready-a) b (start "b/" ready-b)]
                   (try
                     (is (true? @ready-a))
                     (is (true? @ready-b))
                     (finally (deliver release true)))
                   ;; Join both even if either one failed.
                   [(outcome #(deref a)) (outcome #(deref b))]))]
-    (is (= [[[:value "[\"a\",0]"] [:value "[\"b\",0]"]] 2 2 true true]
+    (is (= [[[:value "[\"a\\/\",0]"] [:value "[\"b\\/\",0]"]] 2 2 true true]
            (@observe-scratch-call probe)))))
 
 (deftest scratch-survives-fiber-yield
@@ -375,12 +444,12 @@
                               (reset! prefix (.toString out))
                               (fibers/yield)
                               (.append out "0")))]
-    (is (= ["[\"before\",0,\"after\"]" 2 1 true true]
+    (is (= ["[\"before\\/\",0,\"after\\/\"]" 2 1 true true]
            (@observe-scratch-call
             #(fibers/join
-              (fibers/spawn (fn [] (encode ["before" callback "after"])))))))
+              (fibers/spawn (fn [] (encode ["before/" callback "after/"])))))))
     (is (= 1 @calls))
-    (is (= "[\"before\"," @prefix)))
+    (is (= "[\"before\\/\"," @prefix)))
   (let [sink (atom nil)
         callback (Callback. (fn [out _]
                               (reset! sink out)
@@ -392,19 +461,19 @@
             #(outcome
               (fn []
                 (fibers/join
-                 (fibers/spawn (fn [] (encode ["before" callback])))))))))
-    (is (= "[\"before\",0" (.toString @sink)))))
+                 (fibers/spawn (fn [] (encode ["before/" callback])))))))))
+    (is (= "[\"before\\/\",0" (.toString @sink)))))
 
 (deftest scratch-prefix-remains-stable-across-growth
   (let [prefix (atom nil)
-        large (apply str (repeat 65537 "x"))
+        large (str "/" (apply str (repeat 65537 "x")))
         callback (Callback. (fn [out _]
                               (reset! prefix (.toString out))
                               (.append out "0")))]
-    (is (= (str "[\"a\",0,\"" large "\",\"tail\"]")
-           (encode ["a" callback large "tail"])))
+    (is (= (str "[\"a\\/\",0," (portable large) ",\"tail\\/\"]")
+           (encode ["a/" callback large "tail/"])))
     ;; This captured string must survive later extraction and scratch close.
-    (is (= "[\"a\"," @prefix))))
+    (is (= "[\"a\\/\"," @prefix))))
 
 (defn -main [& _]
   (let [result (run-tests 'clojure.data.json-native-test)]

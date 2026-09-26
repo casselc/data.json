@@ -34,30 +34,41 @@
     ((cdr scratch))))
 
 (define (djn-string value writer flags)
-  ;; Build only this scalar's escaped text, then append once to the shared
-  ;; StringWriter. A callback can inspect the complete prefix immediately.
-  (sb-append! writer
-    (djn-with-string-output flags
-      (lambda (out)
-        (let ((size (string-length value))
-              (unicode? (vector-ref flags 0))
-              (slash? (vector-ref flags 1))
-              (js? (vector-ref flags 2)))
-          (put-char out #\")
-          (let loop ((i 0) (start 0))
-            (if (fx=? i size)
-                (when (fx<? start size)
-                  (put-string out value start (fx- size start)))
-                (let* ((c (string-ref value i)) (cp (char->integer c))
-                       (escape?
-                         (or (fx<? cp 32) (fx=? cp 34) (fx=? cp 92)
-                             (and slash? (fx=? cp 47))
-                             (if (or (fx=? cp #x2028) (fx=? cp #x2029))
-                                 js? (and unicode? (fx>? cp 127))))))
-                  (if escape?
-                      (begin
-                        (when (fx<? start i)
-                          (put-string out value start (fx- i start)))
+  ;; Scan each ordinary run once. Clean immutable strings can be retained by
+  ;; the actual StringWriter without copying/extracting a scratch scalar.
+  ;; Both paths finish the scalar before any later custom callback can run.
+  (let ((size (string-length value))
+        (unicode? (vector-ref flags 0))
+        (slash? (vector-ref flags 1))
+        (js? (vector-ref flags 2)))
+    (letrec ((next-escape
+               (lambda (start)
+                 (let scan ((i start))
+                   (if (fx=? i size) size
+                       (let ((cp (char->integer (string-ref value i))))
+                         (if (or (fx<? cp 32) (fx=? cp 34) (fx=? cp 92)
+                                 (and slash? (fx=? cp 47))
+                                 ;; JS separators have their own switch even
+                                 ;; when general Unicode escaping is enabled.
+                                 (if (or (fx=? cp #x2028) (fx=? cp #x2029))
+                                     js? (and unicode? (fx>? cp 127))))
+                             i (scan (fx+ i 1)))))))))
+      (let ((first (next-escape 0)))
+        (if (fx=? first size)
+            (begin
+              (sb-append! writer "\"")
+              (sb-append! writer value)
+              (sb-append! writer "\""))
+            (sb-append! writer
+              (djn-with-string-output flags
+                (lambda (out)
+                  (put-char out #\")
+                  ;; FIRST is already known; never rescan the clean prefix.
+                  (let loop ((i first) (start 0))
+                    (when (fx<? start i)
+                      (put-string out value start (fx- i start)))
+                    (unless (fx=? i size)
+                      (let ((cp (char->integer (string-ref value i))))
                         (case cp
                           ((34) (put-string out "\\\""))
                           ((92) (put-string out "\\\\"))
@@ -73,9 +84,9 @@
                                 (let ((n (fx- cp #x10000)))
                                   (djn-u16 (fx+ #xd800 (fxsra n 10)) out)
                                   (djn-u16 (fx+ #xdc00 (fxand n #x3ff)) out)))))
-                        (loop (fx+ i 1) (fx+ i 1)))
-                      (loop (fx+ i 1) start)))))
-          (put-char out #\"))))))
+                        (let ((next (fx+ i 1)))
+                          (loop (next-escape next) next)))))
+                  (put-char out #\")))))))))
 
 (define (djn-flags options defaults)
   ;; Only the three boolean escaping switches may differ. Unknown/custom

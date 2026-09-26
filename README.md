@@ -67,10 +67,18 @@ realization order. Only boolean Unicode/slash/JavaScript-separator escape
 switches may differ from stock options; custom/unknown options use the portable
 writer before emission. No input or encoded field is cached.
 
-The scratch-port candidate lazily reuses one string port per public encoding
-call, extracts and appends each scalar immediately to the same StringWriter,
-and closes the port on success or failure. Nested/concurrent calls retain
-separate scratch state. Dispatch guards and fallback behavior are unchanged.
+The clean-string candidate scans each ordinary string run once. If no character
+needs escaping under the three selected flags, it appends quotes and the original
+immutable string directly to the same StringWriter, without scratch extraction.
+Otherwise emission starts at the first escape without rescanning the prefix;
+JavaScript separators retain their independent switch even with Unicode escaping
+enabled. This reduces scalar copies but adds writer chunks; no throughput gain
+is established for this candidate.
+
+Escaped strings lazily reuse one scratch port per public encoding call, extract
+and append each escaped scalar immediately to the same StringWriter, and close
+the port on success or failure. Nested/concurrent calls retain separate scratch
+state. Dispatch guards and fallback behavior are unchanged.
 A matched serial 512-row A/B/B/A comparison had overlapping timing ranges;
 scratch reuse alone has not demonstrated a stable throughput improvement.
 Cleanup uses Jolt's fiber-aware finally marker, so yielding inside a custom
@@ -84,8 +92,10 @@ limitations in the measured cumulative85 AOT runtime are not waived. This
 prototype is not enabled by default and makes no throughput qualification claim.
 
 After providing the pinned runtime helper, the focused source gate is
-`jolt -A:jolt-test -M -m clojure.data.json-native-test` (use the workspace's
-mandatory Chez wrapper). The existing `clojure.data.json-jolt-test` gate and
+`jolt -Srepro -Sdeps '{:paths ["src/main/clojure" "src/test/clojure"]}' -m clojure.data.json-native-test`
+(use the workspace's mandatory Chez wrapper). Explicit paths avoid the
+`:jolt-test` alias's portable-runner `:main-opts` overriding this selection.
+The existing `clojure.data.json-jolt-test` gate and
 portable/JVM suite remain required independently.
 
 
