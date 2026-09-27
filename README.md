@@ -70,9 +70,10 @@ writer before emission. No input or encoded field is cached.
 The Scheme resource is embedded as a string at loader macro expansion and is
 evaluated only on explicit initialization. This is not a compiler-free AOT
 resource loader. Source/resource fingerprint invalidation and application-AOT
-dynamic Var behavior require separate gates; known protocol-method redefinition
-limitations in the measured cumulative85 AOT runtime are not waived. This
-prototype is not enabled by default and makes no throughput qualification claim.
+dynamic Var behavior require separate gates; protocol-method redefinition
+limitations observed in an experimental Jolt 0.8.10-lineage AOT build are not
+waived. This prototype is not enabled by default and makes no throughput
+qualification claim.
 
 After providing the pinned runtime helper, the focused source gate is
 `jolt -A:jolt-test -M -m clojure.data.json-native-test` (use the workspace's
@@ -195,6 +196,8 @@ Change Log
 ----------------------------------------
 
 * Unreleased
+  * Add an opt-in, source-qualified guarded Jolt JSON writer; the portable
+    writer remains the default and application-AOT support is not claimed
   * Perf: skip the default map key callback for string keys and the default
     identity value callback while writing objects; custom callbacks retain
     their existing behavior
