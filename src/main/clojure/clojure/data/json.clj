@@ -984,6 +984,21 @@
                             :indent false
                             :indent-depth 0 ;; internal, to track nesting depth
                             })
+
+;; Capture the functions installed above while this namespace is loading, NOT
+;; when an optional backend is initialized. A later extension is never stock.
+;; This private vector is the versioned bridge contract with jolt_native.ss.
+(def ^:private native-writer-stock
+  [-write write-null write-plain write-double write-bignum write-named
+   write-string write-object write-array default-write-options
+   :clojure.data.json/native-writer-v1])
+
+(def ^:dynamic *experimental-native-writer*
+  "Opt-in source-qualification hook for the Jolt writer; nil keeps the portable
+  implementation. Obtain a writer from clojure.data.json.jolt-native/load-writer!
+  and bind this Var explicitly. Not a supported AOT/default backend."
+  nil)
+
 (defn write
   "Write JSON-formatted output to a java.io.Writer. Options are
    key-value pairs, valid options are:
@@ -1062,11 +1077,16 @@
   write."
   (^String [x]
    (let [sw (StringWriter.)]
-     (-write x sw default-write-options)
+     (if *experimental-native-writer*
+       (*experimental-native-writer* x sw default-write-options native-writer-stock)
+       (-write x sw default-write-options))
      (.toString sw)))
   (^String [x & {:as options}]
-   (let [sw (StringWriter.)]
-     (-write x sw (merge default-write-options options))
+   (let [sw (StringWriter.)
+         options (merge default-write-options options)]
+     (if *experimental-native-writer*
+       (*experimental-native-writer* x sw options native-writer-stock)
+       (-write x sw options))
      (.toString sw))))
 
 ;;; JSON PRETTY-PRINTER
