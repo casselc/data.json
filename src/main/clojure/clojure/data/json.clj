@@ -220,13 +220,10 @@
                 (.append buffer (codepoint-string c)))
               (recur)))))))
 
-(defn- next-string-special [^String s start]
-  (let [quote (.indexOf s (int \" ) (int start))
-        escape (.indexOf s (int \\) (int start))]
-    (cond
-      (neg? quote) escape
-      (neg? escape) quote
-      :else (min quote escape))))
+(defn- ^:redef next-string-quote [^String s start]
+  ;; Keep the scan-work regression seam observable in JVM direct-linked AOT
+  ;; tests too; this is an internal helper, not a public reader option.
+  (.indexOf s (int \" ) (int start)))
 
 (defn- simple-escaped-string [^long c]
   ;; Keep the String-backed reader's common escapes on its local cursor.  The
@@ -259,9 +256,18 @@
   ;; next quote or escape and append whole ordinary runs, rather than crossing
   ;; the host boundary once per character after the initial 64-character block.
   (let [s ^String (.sourceString stream)
-        len (.length s)]
-    (loop [run-start (.position stream), output nil]
-      (let [special-index (next-string-special s run-start)]
+        len (.length s)
+        start (.position stream)]
+    (loop [run-start start, output nil,
+           quote-index (next-string-quote s start)]
+      ;; The immutable source keeps this quote valid until an escape consumes
+      ;; it. Re-searching the same distant closing quote for every newline or
+      ;; backslash escape makes a quote-free escaped run quadratic.
+      (let [escape-index (.indexOf s (int \\) (int run-start))
+            special-index (cond
+                            (neg? quote-index) escape-index
+                            (neg? escape-index) quote-index
+                            :else (min quote-index escape-index))]
         (if (neg? special-index)
           (do
             (.setPosition stream len)
@@ -289,14 +295,24 @@
                   (if escaped
                     (do
                       (.append ^StringBuilder output escaped)
-                      (recur (unchecked-inc escape-index) output))
+                      (let [next-start (unchecked-inc escape-index)]
+                        (recur next-start output
+                               (if (and (not (neg? quote-index))
+                                        (< quote-index next-start))
+                                 (next-string-quote s next-start)
+                                 quote-index))))
                     (do
                       ;; Unicode, invalid escapes, and EOF retain the original
                       ;; decoder and its exact position/error behavior.
                       (.setPosition stream escape-index)
                       (.append ^StringBuilder output
                                (read-escaped-char stream))
-                      (recur (.position stream) output))))))))))))
+                      (let [next-start (.position stream)]
+                        (recur next-start output
+                               (if (and (not (neg? quote-index))
+                                        (< quote-index next-start))
+                                 (next-string-quote s next-start)
+                                 quote-index))))))))))))))
 
 (defn- read-quoted-string [^InternalPBR stream]
   ;; Expects to be called with the head of the stream AFTER the
