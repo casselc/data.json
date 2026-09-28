@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Keep String-backed JSON quoted-string scanning linear for long runs of
+  escaped newlines or backslashes. Reuse the next quote position until an
+  escape consumes it; values, reader positions and existing errors are unchanged.
+
 - Move the guarded writer's unchanged Jolt-only tests to `src/test/jolt`, with
   an explicit `:jolt-native-test` alias, so ordinary JVM Maven test discovery
   does not load Jolt namespaces. The portable/JVM suites remain separate;
