@@ -1068,9 +1068,14 @@
    ;; This is the overwhelmingly common public call shape.  Keeping the
    ;; immutable defaults as-is avoids constructing an empty option map and
    ;; merging it for every scalar written to an existing Writer.
-   (-write x writer default-write-options))
+   (if *experimental-native-writer*
+     (*experimental-native-writer* x writer default-write-options native-writer-stock)
+     (-write x writer default-write-options)))
   ([x ^Writer writer & {:as options}]
-   (-write x writer (merge default-write-options options))))
+   (let [options (merge default-write-options options)]
+     (if *experimental-native-writer*
+       (*experimental-native-writer* x writer options native-writer-stock)
+       (-write x writer options)))))
 
 (defn write-str
   "Converts x to a JSON-formatted string. Options are the same as

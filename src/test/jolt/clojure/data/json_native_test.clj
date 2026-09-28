@@ -92,6 +92,28 @@
                (outcome #(writer ["value"] out json/default-write-options bad-stock))))
         (is (= "prefix" (.toString out)))))))
 
+(deftest existing-writer-native-route-and-options
+  (force prepared)
+  (let [write-to (fn [value options]
+                   (let [sink (StringWriter.)]
+                     (.append sink "prefix")
+                     (binding [json/*experimental-native-writer* (:writer @prepared)]
+                       (apply json/write value sink options))
+                     (.append sink "\n")
+                     (.toString sink)))]
+    (is (= ["prefix{\"a\":[\"b\",1]}\n" 2]
+           (@counted-native-call #(write-to (array-map "a" ["b" 1]) []))))
+    (is (= ["prefix\"é\"\n" 1]
+           (@counted-native-call #(write-to "é" [:escape-unicode false]))))
+    (is (= [(str "prefix" (portable {"a" "b"} :indent true) "\n") 0]
+           (@counted-native-call #(write-to {"a" "b"} [:indent true]))))
+    (let [calls (atom 0)
+          custom (Callback. (fn [out _] (swap! calls inc) (.append out "true")))]
+      (is (= "prefixtrue\n" (write-to custom [])))
+      (is (= 1 @calls)))
+    (is (= [:error "sink-failure"]
+           (outcome #(write-to (Callback. (fn [_ _] (throw (Exception. "sink-failure")))) []))))))
+
 (def ^:private counted-option-flags
   (delay
     ;; Observe only djn-flags' validation fold, outside emission. Like the

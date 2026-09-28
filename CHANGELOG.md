@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Honor the explicitly bound experimental writer in public `write`, as in
+  `write-str`. Its existing sink/options/extension guards remain responsible
+  for portable fallback; unbound calls and the default backend are unchanged.
+
 - Move the guarded writer's unchanged Jolt-only tests to `src/test/jolt`, with
   an explicit `:jolt-native-test` alias, so ordinary JVM Maven test discovery
   does not load Jolt namespaces. The portable/JVM suites remain separate;
