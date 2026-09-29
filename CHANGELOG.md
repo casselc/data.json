@@ -2,6 +2,15 @@
 
 ## Unreleased — experimental, fork-only
 
+- Add an explicitly bound, source-only Jolt String token reader. Native simple
+  escapes avoid per-escape interop; Unicode, malformed escapes and EOF retain
+  the established reader and cursor/error behavior. Default and Reader-backed
+  input are unchanged; standalone/AOT is not qualified.
+
+- Honor the explicitly bound experimental writer in public `write`, as in
+  `write-str`. Its existing sink/options/extension guards remain responsible
+  for portable fallback; unbound calls and the default backend are unchanged.
+
 - Keep String-backed JSON quoted-string scanning linear for long runs of
   escaped newlines or backslashes. Reuse the next quote position until an
   escape consumes it; values, reader positions and existing errors are unchanged.
