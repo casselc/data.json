@@ -43,11 +43,12 @@
              (jolt-vector (substring s start i) (fx+ i 1))))
         ((char=? (string-ref s i) #\\)
          (if (fx>= (fx+ i 1) n) #f
-             (let* ((unicode (and (char=? (string-ref s (fx+ i 1)) #\u)
+             (let* ((escape (string-ref s (fx+ i 1)))
+                    (unicode (and (char=? escape #\u)
                                   (unicode-at i)))
                     (decoded (if unicode (car unicode)
-                     (case (string-ref s (fx+ i 1))
-                       ((#\" #\\ #\/) (string-ref s (fx+ i 1)))
+                     (case escape
+                       ((#\" #\\ #\/) escape)
                        ((#\b) (integer->char 8))
                        ((#\f) (integer->char 12))
                        ((#\n) #\newline)
