@@ -10,8 +10,44 @@
 
 (def reader (delay (native/load-string-reader!)))
 
+(defn- token-outcome [source start decoder]
+  (let [stream (#'json/string-pbr source)]
+    (.setPosition stream start)
+    (binding [json/*experimental-native-string-reader* decoder]
+      (try {:value (#'json/read-quoted-string-from-string stream)
+            :position (.position stream)}
+           (catch Throwable error
+             {:error-class (class error) :error (.getMessage error)
+              :position (.position stream)})))))
+
+(deftest valid-unicode-is-selected-not-silently-fallback
+  (doseq [cp [0 31 127 128 255 2047 2048 55295 57344 65535 65536 128512 1114111]
+          :let [text (str "left" (char cp) "right")
+                token (subs (json/write-str text :escape-unicode true) 1)]]
+    (is (= [text (count token)] (@reader token 0)))
+    (doseq [start [0 2 63 64 65]
+            :let [source (str (apply str (repeat start "p")) token "tail")]]
+      (is (= (token-outcome source start nil)
+             (token-outcome source start @reader)))))
+  (doseq [token ["\\u00aF\"" "\\u00Af\"" "\\udBff\\uDfff\""
+                "a\\n\\u03B2\\t\\uD83D\\uDE00z\""]]
+    (is (vector? (@reader token 0)))
+    (is (= (token-outcome token 0 nil) (token-outcome token 0 @reader)))))
+
+(deftest malformed-and-noncanonical-unicode-retain-exact-errors-and-cursors
+  (doseq [body ["\\u" "\\u1" "\\u12" "\\u123" "\\uZZZZ\""
+                "\\uD800" "\\uD800x\"" "\\uD800\\x0000\""
+                "\\uD800\\u" "\\uD800\\u12" "\\uD800\\u0000\""
+                "\\uD800\\uD800\"" "\\uDC00\"" "\\uDFFF\""
+                "\\u+041\"" "\\u-001\"" "a\\u0041\\uDC00\""]
+          start [0 2 64]
+          :let [source (str (apply str (repeat start "p")) body)]]
+    (is (false? (@reader source start)))
+    (is (= (token-outcome source start nil)
+           (token-outcome source start @reader)))))
+
 (deftest decline-categories-are-explicit-and-do-not-mutate-source
-  (doseq [[category body] [[:unicode "a\\u0041\"tail"]
+  (doseq [[category body] [[:unicode "a\\uZZZZ\"tail"]
                          [:invalid "a\\x\"tail"]
                          [:string-eof "unterminated"]
                          [:escape-eof "trailing\\"]]
@@ -88,7 +124,8 @@
                         (and (<= visits (+ 8 (* 4 (count source))))
                              (<= copied (count source))))]
     (doseq [n [16 64 512 2048]
-            body ["a" "\\n" "\\\\" "\\\"" "ordinary\\t"]
+            body ["a" "\\n" "\\\\" "\\\"" "ordinary\\t" "\\u0041"
+                  "\\uD83D\\uDE00"]
             :let [source (str (apply str (repeat n body)) "\"tail")
                   [result :as observed] (good source 0)]]
       (is (= (@reader source 0) result))

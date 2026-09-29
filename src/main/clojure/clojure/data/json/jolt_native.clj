@@ -51,7 +51,7 @@
   (delay
     (let [loaded (scheme/eval-string string-reader-source)]
       (swap! string-reader-state assoc :backend :guarded-chez :loaded? true
-             :guard :simple-escapes-with-portable-decline)
+             :guard :scalar-escapes-with-portable-decline)
       loaded)))
 
 (defn backend-info
@@ -71,8 +71,8 @@
 (defn load-string-reader!
   "Return the source-only experimental String token reader for explicit binding
   to clojure.data.json/*experimental-native-string-reader*. Does not install a
-  global parser or change the writer. Simple escapes are native; Unicode,
-  malformed escapes and EOF decline to the established scalar-compatible reader.
+  global parser or change the writer. Simple and valid Unicode escapes are native;
+  malformed/noncanonical escapes and EOF decline to the established reader.
   Requires the compiler-bearing Jolt CLI; standalone/AOT is not qualified."
   []
   @string-reader)

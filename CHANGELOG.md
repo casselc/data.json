@@ -2,9 +2,14 @@
 
 ## Unreleased — experimental, fork-only
 
-- Add an explicitly bound, source-only Jolt String token reader. Native simple
-  escapes avoid per-escape interop; Unicode, malformed escapes and EOF retain
-  the established reader and cursor/error behavior. Default and Reader-backed
+- Decode valid Unicode escapes and surrogate pairs in the opt-in Jolt reader.
+  One escaped Unicode value no longer forces an entire large token back to the
+  portable decoder. Malformed/noncanonical escapes and EOF keep original errors
+  and cursor positions; default and JVM behavior remain unchanged.
+
+- Add an explicitly bound, source-only Jolt String token reader. Native scalar
+  escapes avoid per-escape interop; malformed escapes and EOF retain the
+  established reader and cursor/error behavior. Default and Reader-backed
   input are unchanged; standalone/AOT is not qualified.
 
 - Honor the explicitly bound experimental writer in public `write`, as in
