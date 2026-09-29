@@ -108,7 +108,8 @@ guarded native gate; separating discovery does not qualify a native hosted lane.
 
 ### Experimental Jolt string reader (source qualification only)
 
-The optional reader accelerates String-backed JSON tokens with simple escapes.
+The optional reader accelerates String-backed JSON tokens with simple and valid
+Unicode escapes, including supplementary scalars encoded as surrogate pairs.
 It is a generic JSON reader, not a special parser for chDB WAL records:
 
 ```clojure
@@ -118,8 +119,8 @@ It is a generic JSON reader, not a special parser for chDB WAL records:
   (json/read-str "{\"message\":\"hello\\nworld\"}"))
 ```
 
-Without this binding, the existing linear reader remains unchanged. Unicode
-escapes, malformed escapes and EOF use that reader's existing error and cursor
+Without this binding, the existing linear reader remains unchanged. Malformed
+or noncanonical escapes and EOF use that reader's existing error and cursor
 behavior. Reader-backed `read` never invokes the native token decoder. Nothing
 changes persisted JSON bytes, attribute values, writer selection or default
 backend. Successful loading does not mean a caller has enabled the binding.
