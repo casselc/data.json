@@ -251,7 +251,18 @@
     (.append output (.substring s (int start) (int end)))
     output))
 
-(defn- read-quoted-string-from-string [^StringPBR stream]
+(def ^:dynamic *experimental-native-string-reader*
+  "Experimental, explicitly bound String-backed token decoder; nil by default.
+
+  Called with immutable source String and the position just after an opening
+  quote. Return [decoded-string position-after-closing-quote], or nil/false to
+  decline without modifying the source. The established reader handles declines.
+  This is a trusted backend contract, not an arbitrary parser extension point:
+  selected values, positions and errors must preserve the host's JSON semantics.
+  Reader-backed input never invokes it. Ordinary JVM/portable use needs no Jolt."
+  nil)
+
+(defn- portable-read-quoted-string-from-string [^StringPBR stream]
   ;; read-str already owns an immutable String. Let the host String locate the
   ;; next quote or escape and append whole ordinary runs, rather than crossing
   ;; the host boundary once per character after the initial 64-character block.
@@ -313,6 +324,27 @@
                                         (< quote-index next-start))
                                  (next-string-quote s next-start)
                                  quote-index))))))))))))))
+
+(defn- read-quoted-string-from-string [^StringPBR stream]
+  (if-let [decode *experimental-native-string-reader*]
+    (let [s ^String (.sourceString stream)
+          start (.position stream)
+          result (decode s start)]
+      (if (or (nil? result) (false? result))
+        ;; The callback receives no reader, so a decline cannot move its cursor.
+        (portable-read-quoted-string-from-string stream)
+        (do
+          ;; Shape/range validation is not a proof of backend semantic parity.
+          ;; Do not mutate the public cursor until the entire result is valid.
+          (when-not (and (vector? result) (= 2 (count result))
+                         (string? (first result)) (integer? (second result))
+                         (< start (second result)) (<= (second result) (.length s))
+                         (= \" (.charAt s (int (dec (second result))))))
+            (throw (IllegalArgumentException.
+                    "Invalid experimental JSON string-reader result")))
+          (.setPosition stream (long (second result)))
+          (first result))))
+    (portable-read-quoted-string-from-string stream)))
 
 (defn- read-quoted-string [^InternalPBR stream]
   ;; Expects to be called with the head of the stream AFTER the
@@ -1084,9 +1116,14 @@
    ;; This is the overwhelmingly common public call shape.  Keeping the
    ;; immutable defaults as-is avoids constructing an empty option map and
    ;; merging it for every scalar written to an existing Writer.
-   (-write x writer default-write-options))
+   (if *experimental-native-writer*
+     (*experimental-native-writer* x writer default-write-options native-writer-stock)
+     (-write x writer default-write-options)))
   ([x ^Writer writer & {:as options}]
-   (-write x writer (merge default-write-options options))))
+   (let [options (merge default-write-options options)]
+     (if *experimental-native-writer*
+       (*experimental-native-writer* x writer options native-writer-stock)
+       (-write x writer options)))))
 
 (defn write-str
   "Converts x to a JSON-formatted string. Options are the same as

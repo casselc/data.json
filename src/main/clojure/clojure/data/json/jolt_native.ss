@@ -1,10 +1,12 @@
 ;; Library-owned, opt-in Jolt encoder. No encoded-key/value cache and no copied
 ;; collection representation. Every JSON value checks the current protocol Var
-;; root and resolves its method afresh; this is deliberately NOT an epoch cache.
+; root and selects its live method through a core-owned resolution site.
 ;; The caller supplies a real StringWriter. Both native output and custom
 ;; writers mutate that same sink, so fallback never restarts or repeats effects.
 
 (define djn-method-cell (jolt-var "clojure.data.json" "-write"))
+(define djn-json-writer-site
+  (make-protocol-method-site "clojure.data.json/JSONWriter" "-write"))
 (define djn-hex "0123456789abcdef")
 (define djn-escape-keys
   (map (lambda (name) (keyword #f name))
@@ -153,8 +155,7 @@
               (let ((root (var-cell-root djn-method-cell)))
                 (if (not (eq? root dispatcher))
                     (jolt-invoke3 root x writer options)
-                    (let ((impl (protocol-resolve
-                                  "clojure.data.json/JSONWriter" "-write" x)))
+                    (let ((impl (djn-json-writer-site x)))
                       (cond
                         ((and (string? x) (eq? impl string-writer))
                          (djn-string x writer flags))
