@@ -5,7 +5,10 @@
          :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}}
 
  :aliases
- {:jolt-test
+ {:jolt-native-reader-test
+  {:extra-paths ["src/test/jolt" "src/test/clojure"]
+   :main-opts ["-m" "clojure.data.json-native-reader-test"]}
+  :jolt-test
   {:extra-paths ["src/test/clojure"]
    :main-opts ["-m" "clojure.data.json-jolt-test"]}
   :jolt-native-test

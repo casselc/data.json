@@ -106,6 +106,30 @@ independently. Hosted CI currently runs those portable/JVM gates, not the
 guarded native gate; separating discovery does not qualify a native hosted lane.
 
 
+### Experimental Jolt string reader (source qualification only)
+
+The optional reader accelerates String-backed JSON tokens with simple escapes.
+It is a generic JSON reader, not a special parser for chDB WAL records:
+
+```clojure
+(require '[clojure.data.json :as json]
+         '[clojure.data.json.jolt-native :as native])
+(binding [json/*experimental-native-string-reader* (native/load-string-reader!)]
+  (json/read-str "{\"message\":\"hello\\nworld\"}"))
+```
+
+Without this binding, the existing linear reader remains unchanged. Unicode
+escapes, malformed escapes and EOF use that reader's existing error and cursor
+behavior. Reader-backed `read` never invokes the native token decoder. Nothing
+changes persisted JSON bytes, attribute values, writer selection or default
+backend. Successful loading does not mean a caller has enabled the binding.
+
+This requires a compiler-bearing Jolt CLI; standalone/AOT is not qualified.
+Run `jolt -Srepro -M:jolt-native-reader-test` through the workspace's pinned Chez
+wrapper, separately from portable/JVM and native-writer gates. The callback is
+an experimental trusted backend contract: result-shape checks do not prove an
+arbitrary replacement preserves JSON semantics. It is not enabled by default.
+
 Other versions:
 
 * [All Released Versions](https://search.maven.org/#search%7Cgav%7C1%7Cg%3A%22org.clojure%22%20AND%20a%3A%22data.json%22)
