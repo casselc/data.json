@@ -1,8 +1,10 @@
 ;; Generic StringPBR token decoder; not a WAL-specific parser.
 ;; No input/cursor mutation. Valid Unicode escapes use Jolt scalar semantics;
 ;; malformed/noncanonical escapes decline for original error/position behavior.
-;; Every scan advances, except one pure reinspection at the first escape.
-;; Ordinary copied runs are disjoint; output belongs to this token invocation.
+;; Scan/validate first, then allocate the escaped result exactly once. The
+;; second scan fills only that private string; ordinary copied runs are disjoint.
+;; Plain tokens keep the substring fast path. No growing output port or scratch
+;; buffer is retained, and malformed input declines before output allocation.
 (lambda (s start)
   (let ((n (string-length s)))
     (define (hex-unit-at start)
@@ -32,37 +34,47 @@
                                   (fx+ slash 12))))))
                ((fx<= #xdc00 head #xdfff) #f)
                (else (cons (integer->char head) (fx+ slash 6)))))))
-    (let loop ((i start) (run start) (out #f) (extract #f))
-      (cond
-        ((fx>= i n) #f)
-        ((char=? (string-ref s i) #\")
-         (if out
-             (begin
-               (when (fx< run i) (put-string out s run (fx- i run)))
-               (jolt-vector (extract) (fx+ i 1)))
-             (jolt-vector (substring s start i) (fx+ i 1))))
-        ((char=? (string-ref s i) #\\)
-         (if (fx>= (fx+ i 1) n) #f
-             (let* ((escape (string-ref s (fx+ i 1)))
-                    (unicode (and (char=? escape #\u)
-                                  (unicode-at i)))
-                    (decoded (if unicode (car unicode)
-                     (case escape
-                       ((#\" #\\ #\/) escape)
-                       ((#\b) (integer->char 8))
-                       ((#\f) (integer->char 12))
-                       ((#\n) #\newline)
-                       ((#\r) #\return)
-                       ((#\t) #\tab)
-                       (else #f))))
-                    (next (if unicode (cdr unicode) (fx+ i 2))))
-               (cond
-                 ((not decoded) #f)
-                 ((not out)
-                  (call-with-values open-string-output-port
-                    (lambda (port get) (loop i run port get))))
-                 (else
-                  (when (fx< run i) (put-string out s run (fx- i run)))
-                  (put-char out decoded)
-                  (loop next next out extract))))))
-        (else (loop (fx+ i 1) run out extract))))))
+    (define (escape-at slash)
+      (if (fx>= (fx+ slash 1) n) (values #f n)
+          (let* ((escape (string-ref s (fx+ slash 1)))
+                 (unicode (and (char=? escape #\u) (unicode-at slash))))
+            (values
+              (if unicode (car unicode)
+                  (case escape
+                    ((#\" #\\ #\/) escape)
+                    ((#\b) (integer->char 8))
+                    ((#\f) (integer->char 12))
+                    ((#\n) #\newline)
+                    ((#\r) #\return)
+                    ((#\t) #\tab)
+                    (else #f)))
+              (if unicode (cdr unicode) (fx+ slash 2))))))
+    (define (extract end size)
+      (let ((out (make-string size)))
+        (let copy ((i start) (run start) (target 0))
+          (cond
+            ((fx= i end)
+             ;; Chez's primitive takes source, source index, destination,
+             ;; destination index, count (not the R6RS destination-first API).
+             (when (fx< run i) (string-copy! s run out target (fx- i run)))
+             (jolt-vector out (fx+ end 1)))
+            ((char=? (string-ref s i) #\\)
+             (call-with-values (lambda () (escape-at i))
+               (lambda (decoded next)
+                 (let ((at (fx+ target (fx- i run))))
+                   (when (fx< run i) (string-copy! s run out target (fx- i run)))
+                   (string-set! out at decoded)
+                   (copy next next (fx+ at 1))))))
+            (else (copy (fx+ i 1) run target))))))
+    (let scan ((i start) (size 0) (escaped? #f))
+      (if (fx>= i n) #f
+          (let ((ch (string-ref s i)))
+            (cond
+              ((char=? ch #\")
+               (if escaped? (extract i size)
+                   (jolt-vector (substring s start i) (fx+ i 1))))
+              ((char=? ch #\\)
+               (call-with-values (lambda () (escape-at i))
+                 (lambda (decoded next)
+                   (and decoded (scan next (fx+ size 1) #t)))))
+              (else (scan (fx+ i 1) (fx+ size 1) escaped?))))))))

@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Size escaped tokens before allocating their result in the opt-in native
+  String reader. Remove growing-port buffer/extraction copies while retaining
+  exact values, cursor positions, Unicode handling and malformed-input fallback.
+  Results remain independently owned; default/JVM parsing is unchanged.
+
 - Decode valid Unicode escapes and surrogate pairs in the opt-in Jolt reader.
   One escaped Unicode value no longer forces an entire large token back to the
   portable decoder. Malformed/noncanonical escapes and EOF keep original errors

@@ -104,18 +104,47 @@
   ;; The known-bad mode actually rereads each prefix before each requested read.
   (let [source (slurp (io/resource "clojure/data/json/jolt_string_reader.ss"))]
     (scheme/eval-string
-     (str "(let ((ref string-ref) (put put-string) (putc put-char) (slice substring))\n"
+     (str "(let ((ref string-ref) (put put-string) (putc put-char) (slice substring)\n"
+          "       (copy string-copy!) (set string-set!) (make make-string))\n"
           " (lambda (s start)\n"
-          "  (let ((visits 0) (copied 0))\n"
+          "  (let ((visits 0) (copied 0) (allocations '()))\n"
           "   (let ((decode (let ((string-ref (lambda (text i)\n"
           (when bad-prefix-rescan?
             "    (do ((j 0 (fx+ j 1))) ((fx> j i)) (set! visits (fx+ visits 1)) (ref text j))\n")
           "    (set! visits (fx+ visits 1)) (ref text i)))\n"
           "    (put-string (lambda (p text start count) (set! copied (fx+ copied count)) (put p text start count)))\n"
           "    (put-char (lambda (p ch) (set! copied (fx+ copied 1)) (putc p ch)))\n"
+          "    (string-copy! (lambda (text start to at count) (set! copied (fx+ copied count)) (copy text start to at count)))\n"
+          "    (string-set! (lambda (to at ch) (set! copied (fx+ copied 1)) (set to at ch)))\n"
+          "    (make-string (lambda (n) (set! allocations (cons n allocations)) (make n)))\n"
           "    (substring (lambda (text start end) (set! copied (fx+ copied (fx- end start))) (slice text start end))))\n"
           source ")))\n"
-          "    (let ((result (decode s start))) (jolt-vector result visits copied))))))"))))
+          "    (let ((result (decode s start))) (jolt-vector result visits copied (apply jolt-vector allocations)))))))"))))
+
+(deftest escaped-tokens-allocate-one-exact-owned-result
+  (let [decode (counting-reader false)]
+    (doseq [n [1 63 64 65 4096]
+            body ["ordinary\\n" "\\\\" "\\\"" "\\u0041" "\\uD83D\\uDE00"]
+            :let [source (str "pp" (apply str (repeat n body)) "\"tail")
+                  [result _ copied allocations] (decode source 2)]]
+      (is (= (token-outcome source 2 nil) (token-outcome source 2 @reader)))
+      (is (= [(count (first result))] allocations))
+      (is (= (count (first result)) copied)))
+    (doseq [source ["plain\"" "\"" "a\\n\\x\"" "a\\uD800\"" "a\\nunterminated"]
+            :let [[_ _ _ allocations] (decode source 0)]]
+      (is (empty? allocations) "plain or declined tokens need no escaped output allocation"))))
+
+(deftest valid-extraction-never-writes-the-source-or-reuses-result-storage
+  (doseq [body ["prefix\\nmid\\tend" "\\u0041suffix" "head\\uD83D\\uDE00tail"]
+          start [0 2 64]
+          :let [source (str (apply str (repeat start "p")) body "\"tail")
+                before (vec (map int source))
+                expected (token-outcome source start nil)
+                result (@reader source start)]]
+    (is (= before (vec (map int source))))
+    (is (= [(:value expected) (:position expected)] result))
+    (@reader "a different\\nresult\"" 0)
+    (is (= [(:value expected) (:position expected)] result))))
 
 (deftest native-work-is-linear-and-counter-rejects-real-prefix-rescanning
   (let [good (counting-reader false)
