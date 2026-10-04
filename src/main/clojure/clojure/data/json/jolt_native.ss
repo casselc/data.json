@@ -35,7 +35,7 @@
     (write (car scratch))
     ((cdr scratch))))
 
-(define (djn-string value writer flags)
+(define (djn-string-port value writer flags first-index)
   ;; Scan each ordinary run once. Clean immutable strings can be retained by
   ;; the actual StringWriter without copying/extracting a scratch scalar.
   ;; Both paths finish the scalar before any later custom callback can run.
@@ -55,7 +55,7 @@
                                  (if (or (fx=? cp #x2028) (fx=? cp #x2029))
                                      js? (and unicode? (fx>? cp 127))))
                              i (scan (fx+ i 1)))))))))
-      (let ((first (next-escape 0)))
+      (let ((first first-index))
         (if (fx=? first size)
             (begin
               (sb-append! writer "\"")
@@ -89,6 +89,64 @@
                         (let ((next (fx+ i 1)))
                           (loop (next-escape next) next)))))
                   (put-char out #\")))))))))
+
+(define (djn-string value writer flags)
+  ;; Common URLs and route names have just a few slash escapes. Avoid creating
+  ;; a scratch port for those scalars. Plan BEFORE emitting; more than four
+  ;; escapes uses the original port path, so dense strings cannot create an
+  ;; unbounded list of tiny StringWriter fragments. Keep the first escape for
+  ;; fallback rather than rescanning a potentially long clean prefix.
+  (let ((size (string-length value))
+        (unicode? (vector-ref flags 0))
+        (slash? (vector-ref flags 1))
+        (js? (vector-ref flags 2)))
+    (letrec ((next-escape
+               (lambda (start)
+                 (let scan ((i start))
+                   (if (fx=? i size) size
+                       (let ((cp (char->integer (string-ref value i))))
+                         (if (or (fx<? cp 32) (fx=? cp 34) (fx=? cp 92)
+                                 (and slash? (fx=? cp 47))
+                                 (if (or (fx=? cp #x2028) (fx=? cp #x2029))
+                                     js? (and unicode? (fx>? cp 127))))
+                             i (scan (fx+ i 1)))))))))
+      (let ((first (next-escape 0)))
+        (if (fx=? first size)
+            (begin (sb-append! writer "\"")
+                   (sb-append! writer value)
+                   (sb-append! writer "\""))
+            (let ((positions
+                    (let plan ((i first) (positions '()) (count 0))
+                      (cond ((fx=? i size) (reverse positions))
+                            ((fx=? count 4) #f)
+                            (else (plan (next-escape (fx+ i 1))
+                                        (cons i positions) (fx+ count 1)))))))
+              (if (not positions)
+                  (djn-string-port value writer flags first)
+                  (begin
+                    (sb-append! writer "\"")
+                    (let emit ((positions positions) (start 0))
+                      (let ((end (if (null? positions) size (car positions))))
+                        (when (fx<? start end)
+                          (sb-append! writer
+                            (if (and (fx=? start 0) (fx=? end size)) value
+                                (substring value start end))))
+                        (unless (null? positions)
+                          (let ((cp (char->integer (string-ref value end))))
+                            (sb-append! writer
+                              (case cp
+                                ((34) "\\\"") ((92) "\\\\") ((47) "\\/")
+                                ((8) "\\b") ((12) "\\f") ((10) "\\n")
+                                ((13) "\\r") ((9) "\\t")
+                                (else
+                                  (djn-with-string-output flags
+                                    (lambda (out)
+                                      (if (fx<=? cp #xffff) (djn-u16 cp out)
+                                          (let ((n (fx- cp #x10000)))
+                                            (djn-u16 (fx+ #xd800 (fxsra n 10)) out)
+                                            (djn-u16 (fx+ #xdc00 (fxand n #x3ff)) out))))))))
+                          (emit (cdr positions) (fx+ end 1))))))
+                    (sb-append! writer "\"")))))))))
 
 (define (djn-checked-flags options defaults)
   ;; Only the three boolean escaping switches may differ. Unknown/custom

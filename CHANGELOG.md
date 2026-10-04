@@ -2,6 +2,13 @@
 
 ## Unreleased — experimental, fork-only
 
+- Avoid scratch-port emission for up to four sparse short escapes in the
+  opt-in Jolt writer. Dense strings keep the original call-local scratch path;
+  Unicode escapes reuse that same owned scratch. Exact escaping options and
+  custom-writer visibility are unchanged. Focused tests now reject stale
+  macro-embedded writer/reader resources. This remains source-only experimental
+  work, not a default-backend or confirmed Durable-throughput change.
+
 - Decode valid Unicode escapes and surrogate pairs in the opt-in Jolt reader.
   One escaped Unicode value no longer forces an entire large token back to the
   portable decoder. Malformed/noncanonical escapes and EOF keep original errors
