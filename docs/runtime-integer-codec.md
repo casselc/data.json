@@ -100,3 +100,19 @@ Receipts under workspace evidence:
 `chdb-integer-codec-{baseline,candidate}-confirmed-20261005.edn`.
 An initial invocation rejected a missing owned receipt-root environment variable
 before child launch; the subsequent runs supplied explicit persistent roots.
+
+## Default-GC follow-up
+
+With the same candidate sources/compiler and all five nursery tuning variables
+explicitly unset, another 100 × 5k confirmed local trial completed at **36,324
+mean rows/s**, **133.202 ms p50**, **194.824 ms p99** (maximum 205.077 ms).
+Allocated 8.215 GB; 84 collections / 0.884 seconds GC wall time. Fresh recovery
+matched the full 510k-row aggregate in **19.543 seconds**. The writer receipt
+confirms no fixed nursery environment override.
+
+This is a positive default-policy screen, not a paired default-policy baseline
+or proof that the codec caused the difference. Keep it separate from the fixed
+pair and older-source/default-policy results; do not change GC defaults based
+on this experiment. No S3, matched Rust or repeated-tail qualification follows.
+Receipt: `chdb-integer-codec-adaptive-confirmed-20261005.edn` under workspace
+evidence, using the same owned writer/reader driver and source-identity checks.
