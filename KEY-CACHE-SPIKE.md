@@ -56,7 +56,28 @@ Additional receipts: `data-json-original-key-baseline-20261005.edn`,
 local evidence directory. Store:
 `/tmp/exporter-durable-key-cache-20261005.x7GX8mAX`.
 
+## Isolation qualification, 2026-10-05
+
+The focused suite now passes 8 tests / 93 assertions on the same selected
+compiler, including three additional obligations:
+
+- Reentrant writes through the same closure or a separate closure keep the
+  outer sink and escaping flags, even when an inner write caches the same key
+  with different flags. Callback counts and observed outer prefixes stay exact.
+- An exception after a partially emitted payload does not pollute subsequent
+  writes or reuse their values; the failing callback runs once.
+- Two independent closures are paused inside their actual value callbacks
+  until both are admitted, then released. Each performs 256 further
+  yield-interleaved exact-byte comparisons with its own flags and payloads.
+  Readiness and settlement have bounded waits, not timing-based sleeps.
+
+This qualifies those source-mode behaviors, not sharing one closure across
+concurrent callers. Each factory invocation still owns a separate local table;
+discard the closure when its serial payload finishes. No explicit close API,
+GC/reclamation proof, process-global cache, AOT capability, or additional
+throughput claim is introduced by these tests.
+
 Before supported integration: qualify original-source/candidate comparisons,
-explicit factory ownership and disposal, independent overlapping payloads,
-reentrancy, exact typed/native recovery, and review. This is a bounded probe,
+supported factory ownership/disposal API, exact typed/native recovery, and
+review. This is a bounded probe,
 not the solution to the whole Durable throughput target.

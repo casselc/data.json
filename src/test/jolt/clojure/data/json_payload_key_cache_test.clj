@@ -1,6 +1,7 @@
 (ns clojure.data.json-payload-key-cache-test
   (:require [clojure.data.json :as json]
             [clojure.data.json.jolt-native :as native]
+            [jolt.fibers :as fibers]
             [jolt.scheme :as scheme]
             [clojure.test :as test :refer [deftest is]]))
 
@@ -87,6 +88,69 @@
       (is (= :failed (try (encode writer {"bad" bad} {}) :returned
                          (catch Throwable _ :failed))))
       (is (= 1 @calls)))))
+
+(deftest nested-writes-keep-call-local-sinks-and-flags
+  (doseq [shared? [false true]]
+    (let [outer (open-writer) inner (if shared? outer (open-writer))
+          key "β/\u2028" prefixes (atom []) calls (atom 0)
+          nested-value {key "inner"}
+          nested-options {:escape-unicode false :escape-slash false
+                          :escape-js-separators false}
+          expected-inner (portable nested-value nested-options)
+          callback (Callback.
+                    (fn [out _]
+                      (swap! calls inc)
+                      (swap! prefixes conj (.toString out))
+                      (.append out (encode inner nested-value nested-options))))
+          expected (str "{" (portable key {}) ":" expected-inner
+                        ",\"after\":" (portable {key "outer"} {}) "}")]
+      ;; Inner cache insertion uses different flags for the same key. The outer
+      ;; call must resume with its own flags and real sink, not the inner call's.
+      (dotimes [_ 3]
+        (is (= expected (encode outer (array-map key callback "after" {key "outer"}) {}))))
+      (is (= 3 @calls))
+      (is (= (repeat 3 (str "{" (portable key {}) ":")) @prefixes)))))
+
+(deftest failed-payload-does-not-contaminate-next-call
+  (let [writer (open-writer) calls (atom 0)
+        bad (Callback. (fn [out _] (swap! calls inc) (.append out "7")
+                         (throw (ex-info "expected" {}))))]
+    (is (= :failed (try (encode writer (array-map "warm" 1 "bad" bad) {})
+                       :returned (catch Throwable _ :failed))))
+    (is (= 1 @calls))
+    (doseq [options [{} {:escape-unicode false} {}]]
+      (is (= (portable {"warm" "new-value" "β/" nil} options)
+             (encode writer {"warm" "new-value" "β/" nil} options))))))
+
+(deftest independent-payloads-overlap-without-binding-or-sink-leaks
+  (let [release (promise) ready [(promise) (promise)]
+        writers [(open-writer) (open-writer)]
+        options [{} {:escape-unicode false :escape-slash false}]
+        workers (mapv
+                 (fn [index]
+                   (fibers/spawn
+                     (fn []
+                       (let [writer (nth writers index) opts (nth options index)
+                             key "shared-β/"
+                             callback (Callback. (fn [out _]
+                                                   (deliver (nth ready index) :ready)
+                                                   (assert (= :release (deref release 5000 :timeout)))
+                                                   (.append out "7")))
+                             first-output (encode writer {key callback} opts)
+                             first-expected (portable {key 7} opts)]
+                         (and (= first-expected first-output)
+                              (every? true?
+                                (for [i (range 256)]
+                                  (let [value (array-map key i "id" index)]
+                                    (fibers/yield)
+                                    (= (portable value opts) (encode writer value opts))))))))))
+                 [0 1])]
+    ;; Explicit readiness proves both calls are live before either may return;
+    ;; release in finally so a failed readiness assertion cannot strand them.
+    (try
+      (doseq [signal ready] (is (= :ready (deref signal 5000 :timeout))))
+      (finally (deliver release :release)))
+    (doseq [worker workers] (is (true? (fibers/join worker 10000 :timeout))))))
 
 (defn -main [& _]
   (let [result (test/run-tests 'clojure.data.json-payload-key-cache-test)]

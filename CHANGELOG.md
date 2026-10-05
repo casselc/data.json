@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Qualify the source-only payload-key-cache spike for nested writes, recovery
+  after a callback failure, and overlapping independently owned payloads.
+  Sharing one cache concurrently, standalone/AOT, and supported loader
+  integration remain unqualified; the default encoder is unchanged.
+
 - Size escaped tokens before allocating their result in the opt-in native
   String reader. Remove growing-port buffer/extraction copies while retaining
   exact values, cursor positions, Unicode handling and malformed-input fallback.
