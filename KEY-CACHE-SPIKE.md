@@ -3,11 +3,27 @@
 This branch starts at the consumer-pinned `56db146`. It does not replace the
 default backend, change the public loader, or move any dependency pins.
 
-After `load-writer!`, the experimental Scheme factory
-`djn-make-key-cache-writer` returns a fresh four-argument writer closure for
-binding to `clojure.data.json/*experimental-native-writer*`. Discard that closure
-after one serial payload. The factory is deliberately not a supported Clojure
-API yet; concurrent use of a single cache is not qualified.
+The explicit experimental Clojure loader `load-payload-writer!` returns a fresh
+four-argument writer closure for binding to
+`clojure.data.json/*experimental-native-writer*`. Discard that closure after
+one serial payload. Concurrent use of a single cache is not qualified.
+The ordinary `load-writer!` remains uncached and unchanged.
+
+```clojure
+(require '[clojure.data.json :as json]
+         '[clojure.data.json.jolt-native :as native])
+
+(let [writer (native/load-payload-writer!)]
+  (binding [json/*experimental-native-writer* writer]
+    ;; Serialize in this caller, not parallel workers inheriting the binding.
+    ;; Another simultaneous payload obtains a separate writer.
+    (mapv json/write-str [{"name" "first"} {"name" "second"}])))
+```
+
+No native allocations require manual close. The loader retains its uncached
+definitions, not returned payload closures. Holding a closure after completion
+also holds its bounded key cache. Reachability/GC determines reclamation, not
+an explicit close or a guarantee of immediate erasure.
 
 The cache stores escaped object-key text only, with all three escaping flags.
 The same current ABI, option, protocol-Var and live per-value method checks
@@ -58,7 +74,7 @@ local evidence directory. Store:
 
 ## Isolation qualification, 2026-10-05
 
-The focused suite now passes 8 tests / 93 assertions on the same selected
+The isolation checkpoint passed 8 tests / 93 assertions on the same selected
 compiler, including three additional obligations:
 
 - Reentrant writes through the same closure or a separate closure keep the
@@ -77,7 +93,11 @@ discard the closure when its serial payload finishes. No explicit close API,
 GC/reclamation proof, process-global cache, AOT capability, or additional
 throughput claim is introduced by these tests.
 
+After adding the explicit Clojure loader, the focused suite passes 9 tests /
+98 assertions, including fresh-writer identity and unchanged caller bindings.
+Combined native-writer/cache suites report 32 tests / 598 passing assertions.
+
 Before supported integration: qualify original-source/candidate comparisons,
-supported factory ownership/disposal API, exact typed/native recovery, and
+consumer ownership/lifetime integration, exact typed/native recovery, and
 review. This is a bounded probe,
 not the solution to the whole Durable throughput target.

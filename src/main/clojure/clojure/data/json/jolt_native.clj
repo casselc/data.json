@@ -68,6 +68,24 @@
   []
   @writer)
 
+(defn load-payload-writer!
+  "Return a fresh experimental key-caching writer for one caller-owned serial
+  payload. Bind it to clojure.data.json/*experimental-native-writer* only for
+  that operation, then discard it. Nested synchronous writes are supported;
+  concurrent callers must each obtain their own writer. Do not convey this
+  writer binding into parallel serialization workers.
+
+  Only escaped object keys are cached, bounded to 128 entries and 8,192
+  retained key-plus-encoded characters. Values, callbacks and dispatch methods
+  are not cached. There is no process-global payload cache or native resource
+  to close; retaining the returned closure retains its bounded key cache.
+  This uses the existing qualified source-mode loader and guards. It does not
+  install a backend globally, qualify standalone/AOT, or change load-writer!."
+  []
+  ;; Initialize definitions once; never retain payload closures in loader state.
+  (load-writer!)
+  ((scheme/proc "djn-make-key-cache-writer")))
+
 (defn load-string-reader!
   "Return the source-only experimental String token reader for explicit binding
   to clojure.data.json/*experimental-native-string-reader*. Does not install a

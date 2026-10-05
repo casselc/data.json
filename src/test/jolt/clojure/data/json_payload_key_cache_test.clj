@@ -2,12 +2,10 @@
   (:require [clojure.data.json :as json]
             [clojure.data.json.jolt-native :as native]
             [jolt.fibers :as fibers]
-            [jolt.scheme :as scheme]
             [clojure.test :as test :refer [deftest is]]))
 
 (defn- open-writer []
-  (native/load-writer!)
-  ((scheme/proc "djn-make-key-cache-writer")))
+  (native/load-payload-writer!))
 
 (defn- encode [writer value options]
   (binding [json/*experimental-native-writer* writer]
@@ -20,6 +18,15 @@
 (deftype Callback [f]
   json/JSONWriter
   (-write [_ out options] (f out options)))
+
+(deftest loader-returns-fresh-writers-without-global-installation
+  (let [before json/*experimental-native-writer*
+        first-writer (open-writer) second-writer (open-writer)]
+    (is (ifn? first-writer))
+    (is (ifn? second-writer))
+    (is (not (identical? first-writer second-writer)))
+    (is (identical? before json/*experimental-native-writer*))
+    (is (not (identical? first-writer (native/load-writer!))))))
 
 (deftest flags-collisions-growth-and-omission
   (let [writer (open-writer)

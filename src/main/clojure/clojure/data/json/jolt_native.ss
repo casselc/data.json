@@ -1,5 +1,6 @@
-;; Library-owned, opt-in Jolt encoder. No encoded-key/value cache and no copied
-;; collection representation. Every JSON value checks the current protocol Var
+;; Library-owned, opt-in Jolt encoder. Default calls have no key cache; optional
+;; payload closures cache keys only. No copied collection representation.
+;; Every JSON value checks the current protocol Var
 ; root and selects its live method through a core-owned resolution site.
 ;; The caller supplies a real StringWriter. Both native output and custom
 ;; writers mutate that same sink, so fallback never restarts or repeats effects.

@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Expose an experimental source-only `load-payload-writer!` that returns an
+  independently owned serial key-cache writer. The ordinary loader and default
+  writer are unchanged; concurrent callers must obtain separate closures.
+
 - Qualify the source-only payload-key-cache spike for nested writes, recovery
   after a callback failure, and overlapping independently owned payloads.
   Sharing one cache concurrently, standalone/AOT, and supported loader
