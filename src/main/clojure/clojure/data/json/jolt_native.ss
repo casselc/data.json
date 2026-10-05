@@ -121,7 +121,35 @@
       ;; rejection. Only valid identity inputs take the shortcut above.
       (djn-checked-flags options defaults)))
 
-(define (djn-write! value writer options stock)
+(define (djn-key-string name writer flags cache)
+  ;; Experimental caller-owned key-only cache. Never cache values, protocol
+  ;; resolution, key-fn results, or omission decisions. Escape flags form part
+  ;; of each entry; key-fn has already executed before reaching this function.
+  (if (not cache)
+      (djn-string name writer flags)
+      (let* ((table (vector-ref cache 0))
+             (entry (hashtable-ref table name #f)))
+        (if (and entry
+                 (eq? (vector-ref entry 0) (vector-ref flags 0))
+                 (eq? (vector-ref entry 1) (vector-ref flags 1))
+                 (eq? (vector-ref entry 2) (vector-ref flags 2)))
+            (sb-append! writer (vector-ref entry 3))
+            (if (and (fx<=? (string-length name) 128)
+                     (fx<? (hashtable-size table) 128)
+                     (fx<? (vector-ref cache 1) 8192))
+                (let ((sink (host-new "StringWriter")))
+                  (djn-string name sink flags)
+                  (let* ((encoded (sb-str sink))
+                         (size (fx+ (string-length name) (string-length encoded))))
+                    (when (fx<=? (fx+ size (vector-ref cache 1)) 8192)
+                      (hashtable-set! table name
+                        (vector (vector-ref flags 0) (vector-ref flags 1)
+                                (vector-ref flags 2) encoded))
+                      (vector-set! cache 1 (fx+ size (vector-ref cache 1))))
+                    (sb-append! writer encoded)))
+                (djn-string name writer flags))))))
+
+(define (djn-write! value writer options stock . key-caches)
   ;; Stock vector ABI 1, captured in json.clj immediately after registrations:
   ;; dispatch/null/plain/double/bignum/named/string/map/array/default-options/tag.
   ;; Check before reading ANY positional field or emitting output. A stale
@@ -134,7 +162,8 @@
                     (keyword "clojure.data.json" "native-writer-abi-mismatch")))))
   (let* ((dispatcher (pvec-nth! stock 0))
          (defaults (pvec-nth! stock 9))
-         (flags (djn-flags options defaults)))
+         (flags (djn-flags options defaults))
+         (key-cache (and (pair? key-caches) (car key-caches))))
     (if (not (and (string-writer? writer) flags))
         (jolt-invoke3 (var-cell-root djn-method-cell) value writer options)
         (let ((null-writer (pvec-nth! stock 1))
@@ -189,7 +218,7 @@
                                (if (jolt=2 value-fn child) printed?
                                    (begin
                                      (when printed? (sb-append! writer ","))
-                                     (djn-string name writer flags)
+                                     (djn-key-string name writer flags key-cache)
                                      (sb-append! writer ":")
                                      (emit child)
                                      #t)))) #f)
@@ -215,5 +244,12 @@
                 (let ((scratch (vector-ref flags 3)))
                   (when scratch (close-port (car scratch)))))))))
     jolt-nil))
+
+(define (djn-make-key-cache-writer)
+  ;; Source-only diagnostic factory; one closure per payload. No global cache
+  ;; and no installation into data.json. Caller discards the closure on exit.
+  (let ((cache (vector (make-hashtable string-hash string=?) 0)))
+    (lambda (value writer options stock)
+      (djn-write! value writer options stock cache))))
 
 djn-write!
