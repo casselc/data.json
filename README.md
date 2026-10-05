@@ -125,6 +125,13 @@ behavior. Reader-backed `read` never invokes the native token decoder. Nothing
 changes persisted JSON bytes, attribute values, writer selection or default
 backend. Successful loading does not mean a caller has enabled the binding.
 
+Valid escaped tokens are scanned twice: first to validate and determine the
+decoded length, then to fill one exactly sized, independently owned string.
+Plain tokens retain the substring path. This avoids a growing output port and
+its intermediate copies; it does not eliminate the input string or guarantee
+an end-to-end recovery speedup. The native gate checks actual allocation/copy
+operations as well as decoded values and cursor behavior.
+
 This requires a compiler-bearing Jolt CLI; standalone/AOT is not qualified.
 Run `jolt -Srepro -M:jolt-native-reader-test` through the workspace's pinned Chez
 wrapper, separately from portable/JVM and native-writer gates. The callback is
