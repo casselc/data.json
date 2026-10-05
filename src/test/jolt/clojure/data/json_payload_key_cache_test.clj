@@ -2,6 +2,7 @@
   (:require [clojure.data.json :as json]
             [clojure.data.json.jolt-native :as native]
             [jolt.fibers :as fibers]
+            [jolt.scheme :as scheme]
             [clojure.test :as test :refer [deftest is]]))
 
 (defn- open-writer []
@@ -42,6 +43,26 @@
                     {:escape-js-separators false} {}]
               value values]
         (is (= (portable value opts) (encode writer value opts)))))))
+
+(deftest identity-index-does-not-retain-equal-key-aliases
+  (native/load-writer!)
+  (let [cache (scheme/eval-string "(vector (make-hashtable string-hash string=?) 0 (make-eq-hashtable))")
+        make-writer (scheme/eval-string "(lambda (cache) (lambda (v out opts stock) (djn-write! v out opts stock cache)))")
+        writer (make-writer cache)
+        key "schema/β"
+        size (fn [slot] (scheme/call "hashtable-size" (scheme/call "vector-ref" cache slot)))]
+    (is (= (portable {key 1} {}) (encode writer {key 1} {})))
+    (dotimes [i 256]
+      (let [alias (subs (str "!" key) 1)
+            options (if (even? i) {:escape-unicode false :escape-slash false} {})]
+        (is (not (identical? key alias)))
+        (is (= (portable {alias i} options) (encode writer {alias i} options)))
+        (is (= 1 (size 0) (size 2)))))
+    (let [many (into {} (map (fn [i] [(str "key-" i) i]) (range 256)))]
+      (is (= (portable many {}) (encode writer many {})))
+      (is (<= (size 0) 128))
+      (is (= (size 0) (size 2)))
+      (is (<= (scheme/call "vector-ref" cache 1) 8192)))))
 
 (deftest live-string-extension-after-key-cache-warmup
   (let [writer (open-writer) stock @#'json/write-string]

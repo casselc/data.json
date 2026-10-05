@@ -129,7 +129,12 @@
   (if (not cache)
       (djn-string name writer flags)
       (let* ((table (vector-ref cache 0))
-             (entry (hashtable-ref table name #f)))
+             ;; Index only the representative already retained by TABLE.
+             ;; Equal fresh strings do not add aliases or retention; they
+             ;; still consult the authoritative content-keyed table.
+             (identities (vector-ref cache 2))
+             (entry (or (hashtable-ref identities name #f)
+                        (hashtable-ref table name #f))))
         (if (and entry
                  (eq? (vector-ref entry 0) (vector-ref flags 0))
                  (eq? (vector-ref entry 1) (vector-ref flags 1))
@@ -143,9 +148,13 @@
                   (let* ((encoded (sb-str sink))
                          (size (fx+ (string-length name) (string-length encoded))))
                     (when (fx<=? (fx+ size (vector-ref cache 1)) 8192)
-                      (hashtable-set! table name
-                        (vector (vector-ref flags 0) (vector-ref flags 1)
-                                (vector-ref flags 2) encoded))
+                      (let* ((representative (if entry (vector-ref entry 4) name))
+                             (fresh (vector (vector-ref flags 0) (vector-ref flags 1)
+                                            (vector-ref flags 2) encoded representative)))
+                        ;; Update both indices on flag changes, including
+                        ;; nested synchronous calls that reuse this cache.
+                        (hashtable-set! table representative fresh)
+                        (hashtable-set! identities representative fresh))
                       (vector-set! cache 1 (fx+ size (vector-ref cache 1))))
                     (sb-append! writer encoded)))
                 (djn-string name writer flags))))))
@@ -249,7 +258,8 @@
 (define (djn-make-key-cache-writer)
   ;; Source-only diagnostic factory; one closure per payload. No global cache
   ;; and no installation into data.json. Caller discards the closure on exit.
-  (let ((cache (vector (make-hashtable string-hash string=?) 0)))
+  (let ((cache (vector (make-hashtable string-hash string=?) 0
+                       (make-eq-hashtable))))
     (lambda (value writer options stock)
       (djn-write! value writer options stock cache))))
 

@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Index retained payload-cache keys by identity before content hashing.
+  The index shares the same bounded key representatives, never retains equal
+  fresh aliases, and updates both lookups when escape flags change. Live value
+  serialization, callback fallback and the default writer remain unchanged.
+
 - Expose an experimental source-only `load-payload-writer!` that returns an
   independently owned serial key-cache writer. The ordinary loader and default
   writer are unchanged; concurrent callers must obtain separate closures.

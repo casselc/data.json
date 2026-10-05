@@ -77,7 +77,9 @@
 
   Only escaped object keys are cached, bounded to 128 entries and 8,192
   retained key-plus-encoded characters. Values, callbacks and dispatch methods
-  are not cached. There is no process-global payload cache or native resource
+  are not cached. An identity index references only the same retained key
+  representatives; equal newly allocated names do not add alias entries.
+  There is no process-global payload cache or native resource
   to close; retaining the returned closure retains its bounded key cache.
   This uses the existing qualified source-mode loader and guards. It does not
   install a backend globally, qualify standalone/AOT, or change load-writer!."
