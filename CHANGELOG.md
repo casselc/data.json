@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Reuse the qualified runtime-owned fixnum decimal codec in the opt-in guarded
+  Jolt writer, avoiding the general formatter for ordinary integers. Big integers
+  and runtimes without the helper retain the previous formatter. Live JSONWriter
+  dispatch, value text, default encoding, and JVM/Babashka paths are unchanged.
+
 - Expose an experimental source-only `load-payload-writer!` that returns an
   independently owned serial key-cache writer. The ordinary loader and default
   writer are unchanged; concurrent callers must obtain separate closures.

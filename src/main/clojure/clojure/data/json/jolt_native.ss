@@ -15,6 +15,23 @@
 (define djn-key-fn (keyword #f "key-fn"))
 (define djn-value-fn (keyword #f "value-fn"))
 
+;; Optional runtime-owned decimal codec. Chez's general number->string goes
+;; through its formatter/cache; Jolt already specializes fixnums without that
+;; shared formatting state. Qualify the selected capability without imposing a
+;; new helper requirement on older source-mode runtimes. Big integers retain
+;; number->string; this never changes protocol dispatch or caches value text.
+(define djn-fixnum-renderer
+  (guard (condition (else #f))
+    (let ((render (and (top-level-bound? 'jolt-fixnum->string)
+                       (top-level-value 'jolt-fixnum->string))))
+      (and (procedure? render)
+           (for-all (lambda (n) (string=? (render n) (number->string n)))
+                    (list 0 1 -1 9 -9 10 -10 99 -99 100 -100
+                          (most-negative-fixnum) (most-positive-fixnum)))
+           render))))
+
+(define (djn-runtime-fixnum-enabled?) (and djn-fixnum-renderer #t))
+
 (define (djn-u16 cp out)
   (put-string out "\\u")
   (put-char out (string-ref djn-hex (fxand (fxsra cp 12) 15)))
@@ -195,7 +212,10 @@
                          (sb-append! writer (if x "true" "false")))
                         ((and (integer? x) (exact? x)
                               (or (eq? impl plain-writer) (eq? impl bignum-writer)))
-                         (sb-append! writer (number->string x)))
+                         (sb-append! writer
+                           (if (and (fixnum? x) djn-fixnum-renderer)
+                               (djn-fixnum-renderer x)
+                               (number->string x))))
                         ((and (flonum? x) (finite? x) (eq? impl double-writer))
                          (sb-append! writer (jolt-flonum->string x)))
                         ((and (or (keyword? x) (symbol-t? x))
