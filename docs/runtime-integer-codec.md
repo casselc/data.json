@@ -61,3 +61,42 @@ byte sink or map-constructor overlay. Receipts:
 
 Keep this change as a bounded cumulative candidate. Independent review and
 matched core Durable/tail measures remain before product repins or merge.
+
+## Matched core Durable screen
+
+Same compiler/native library, clean chDB `228aeb1` (production `cdf3784`),
+100 individually confirmed 5,000-row batches, four encoding workers, two warmups.
+Both runs explicitly use `JOLT_GC_TRIP_BYTES=16777216`; this is not a change to
+runtime defaults. The existing guarded writer is inherited through the
+`:configured` encoder; no payload key cache, map-builder or byte-sink overlay.
+Only the codec root changes (`993b906` versus `f15cc33` source).
+
+| Measure | Existing codec | Runtime integer codec |
+| --- | ---: | ---: |
+| Mean confirmed rows/s | 34,786 | 34,230 |
+| 5k-batch p50 | 143.317 ms | 141.672 ms |
+| 5k-batch p99 | 179.419 ms | 229.323 ms |
+| Maximum batch | 180.175 ms | 250.652 ms |
+| Allocated | 8.914 GB | 8.232 GB |
+| GC count / wall time | 477 / 2.184 s | 401 / 2.286 s |
+| Fresh recovery | 22.962 s | 24.364 s |
+
+Both writer/reader pairs terminated successfully, all 100 confirmations were
+committed, no pending statements/bytes remained, and independent readback
+matched all 510,000 rows and the full aggregate. Parent, writer and reader
+resource-source identities matched within each trial.
+
+The observed p50/p99 inverse rates exceed 25k/20k for both trials, but the
+selector explicitly does not qualify tail throughput. These are sequential
+single local screens, not the five-trial/512-row qualification, adaptive-default
+behavior, S3 or matched Rust evidence. Fewer allocations/collections did not
+improve overall mean or GC wall time here. In particular, the candidate has a
+worse observed tail/recovery than this baseline; do not promote it as a core
+latency improvement from these results.
+
+Driver: `chdb-integer-codec-confirmed-driver-20261005.clj`, reusing the existing
+owned child trial with the explicit codec root propagated to both children.
+Receipts under workspace evidence:
+`chdb-integer-codec-{baseline,candidate}-confirmed-20261005.edn`.
+An initial invocation rejected a missing owned receipt-root environment variable
+before child launch; the subsequent runs supplied explicit persistent roots.
