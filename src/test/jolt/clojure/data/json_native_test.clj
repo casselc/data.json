@@ -92,6 +92,67 @@
                (outcome #(writer ["value"] out json/default-write-options bad-stock))))
         (is (= "prefix" (.toString out)))))))
 
+(def ^:private counted-empty-setup
+  (delay
+    ;; Serial/fresh-process observer only; no counters in production code.
+    (scheme/eval-string
+      "(lambda (thunk)
+         (let ((original-flags djn-flags)
+               (original-site djn-json-writer-site) (flags 0) (resolutions 0))
+           (dynamic-wind
+             (lambda ()
+               (set! djn-flags (lambda (options defaults)
+                 (set! flags (+ flags 1)) (original-flags options defaults)))
+               (set! djn-json-writer-site (lambda (value)
+                 (set! resolutions (+ resolutions 1)) (original-site value))))
+             (lambda () (let ((value (jolt-invoke0 thunk)))
+               (jolt-vector value flags resolutions)))
+             (lambda () (set! djn-flags original-flags)
+                        (set! djn-json-writer-site original-site)))))")))
+
+(deftest empty-default-vector-skips-setup-not-live-resolution
+  (force prepared)
+  (is (= ["[]" 0 1] (@counted-empty-setup #(encode []))))
+  (doseq [writer [(native/load-writer!) (native/load-payload-writer!)
+                  (native/load-payload-string-caching-writer!)]]
+    (binding [json/*experimental-native-writer* writer]
+      (is (= "[]" (json/write-str [])))
+      (is (= "[]" (json/write-str [])))))
+  ;; Nested empty vectors still belong to their parent's one recursive context.
+  (is (= ["[[]]" 1 2] (@counted-empty-setup #(encode [[]]))))
+  (doseq [options [[:indent true] [:escape-unicode false]
+                   [:value-fn (fn [_ value] value)] [:unknown true]]]
+    (is (= (portable []) (apply encode [] options)))
+    (is (= 1 (second (@counted-empty-setup #(apply encode [] options))))))
+  (let [calls (atom 0) stock-array @#'json/write-array]
+    (try
+      (extend java.util.Collection json/JSONWriter
+              {:-write (fn [value sink options]
+                         (swap! calls inc)
+                         (is (= [] value))
+                         (is (identical? json/default-write-options options))
+                         (.append sink "7"))})
+      (is (= ["7" 0 1] (@counted-empty-setup #(encode []))))
+      (is (= 1 @calls))
+      (extend java.util.Collection json/JSONWriter
+              {:-write (fn [_ _ _] (swap! calls inc)
+                         (throw (Exception. "empty-custom-failure")))})
+      (is (= [:error "empty-custom-failure"] (outcome #(encode []))))
+      (is (= 2 @calls))
+      (finally (extend java.util.Collection json/JSONWriter {:-write stock-array}))))
+  (with-redefs [json/-write (fn [_ out _] (.append out "42"))]
+    (is (= ["42" 1 0] (@counted-empty-setup #(encode [])))))
+  (let [sink (StringWriter.)]
+    (.append sink "prefix")
+    (binding [json/*experimental-native-writer* (:writer @prepared)]
+      (json/write [] sink))
+    (is (= "prefix[]" (.toString sink))))
+  (let [writer (:writer @prepared) stock @#'json/native-writer-stock
+        missing (dissoc json/default-write-options :indent)
+        sink (StringWriter.)]
+    (writer [] sink missing (assoc stock 9 missing))
+    (is (= "[]" (.toString sink)))))
+
 (deftest existing-writer-native-route-and-options
   (force prepared)
   (let [write-to (fn [value options]

@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Avoid recursive writer/scratch setup for a top-level empty vector with the
+  captured default options. Resolve its live protocol writer exactly once;
+  custom writers still run and non-default options keep the original path.
+
 - Add a separate source-only payload string-fragment cache factory. Preserve
   live method/root checks and option-qualified output; cap retention to 128
   stock-string entries/65,536 input-plus-output characters per serial payload.

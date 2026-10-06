@@ -218,6 +218,25 @@
                     (sb-append! writer encoded)))
                 (djn-string value writer flags))))))
 
+(define djn-indent (keyword #f "indent"))
+(define (djn-empty-default-vector! value writer options stock)
+  ;; The caller has already validated the bridge ABI. This special case has
+  ;; no children, escaping or scratch port to initialize. Default map identity
+  ;; and explicit false indentation restrict it to the stock options contract.
+  ;; Resolve ONCE even for custom vector writers: declining after resolution
+  ;; would repeat arbitrary receiver-predicate effects in the general path.
+  (and (pvec? value) (fx=? (pvec-count value) 0)
+       (string-writer? writer)
+       (let ((defaults (pvec-nth! stock 9)))
+         (and (pmap? defaults) (eq? options defaults)
+              (eq? (pmap-fast-get defaults djn-indent pmap-absent) #f)))
+       (eq? (var-cell-root djn-method-cell) (pvec-nth! stock 0))
+       (let ((impl (djn-json-writer-site value)))
+         (if (eq? impl (pvec-nth! stock 8))
+             (sb-append! writer "[]")
+             (jolt-invoke3 impl value writer options))
+         #t)))
+
 (define (djn-write! value writer options stock . key-caches)
   ;; Stock vector ABI 1, captured in json.clj immediately after registrations:
   ;; dispatch/null/plain/double/bignum/named/string/map/array/default-options/tag.
@@ -229,6 +248,7 @@
     (jolt-throw (jolt-ex-info "data.json native writer ABI mismatch"
                   (jolt-hash-map (keyword #f "type")
                     (keyword "clojure.data.json" "native-writer-abi-mismatch")))))
+  (unless (djn-empty-default-vector! value writer options stock)
   (let* ((dispatcher (pvec-nth! stock 0))
          (defaults (pvec-nth! stock 9))
          (flags (djn-flags options defaults))
@@ -317,6 +337,7 @@
                 (let ((scratch (vector-ref flags 3)))
                   (when scratch (close-port (car scratch)))))))))
     jolt-nil))
+  jolt-nil)
 
 (define (djn-make-key-cache-writer)
   ;; Source-only diagnostic factory; one closure per payload. No global cache
