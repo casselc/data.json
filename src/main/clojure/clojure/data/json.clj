@@ -738,15 +738,48 @@
          (merge default-read-options)
          (-read1 pbr eof-error? eof-value))))
 
+(def ^:dynamic *experimental-native-reader*
+  "Opt-in, source-qualified whole-String reader. Backend receives immutable
+  source, merged options and a stock scalar-number decoder. Returns [value end]
+  for a complete supported input or nil/false to decline. This trusted backend
+  contract does not prove semantic parity. Reader input never invokes it."
+  nil)
+
+(defn- read-str-portable [string options]
+  (let [{:keys [eof-error? eof-value]
+         :or {eof-error? true}} options]
+    (-read1 (string-pbr string) eof-error? eof-value options)))
+
 (defn read-str
   "Reads one JSON value from input String. Options are the same as for
   read."
   [string & {:as options}]
-  (let [{:keys [eof-error? eof-value]
-         :or {eof-error? true}} options]
-    (->> options
-         (merge default-read-options)
-         (-read1 (string-pbr string) eof-error? eof-value))))
+  (let [options (merge default-read-options options)
+        backend *experimental-native-reader*
+        result (when (and backend (string? string)
+                          (nil? (:key-fn options)) (nil? (:value-fn options)))
+                 (backend string options
+                          (fn [token]
+                            ;; Conversion errors decline before the original
+                            ;; full reader produces its established error.
+                            (try
+                              (-read1 (string-pbr token) true nil
+                                      (assoc options :extra-data-fn on-extra-throw))
+                              (catch Exception _ false)))))]
+    (if (or (nil? result) (false? result))
+      (read-str-portable string options)
+      (do
+        (when-not (and (vector? result) (= 2 (count result))
+                       (integer? (second result))
+                       (<= 0 (second result) (.length ^String string)))
+          (throw (IllegalArgumentException.
+                  "Invalid experimental JSON whole-reader result")))
+        ;; Stock invokes extra-data-fn even for trailing whitespace. Preserve
+        ;; the callback's exact Reader/cursor/effects via the unchanged route.
+        (if (and (:extra-data-fn options)
+                 (< (second result) (.length ^String string)))
+          (read-str-portable string options)
+          (first result))))))
 
 ;;; JSON WRITER
 

@@ -26,6 +26,15 @@
 
 (def ^:private string-reader-source (reader-source))
 
+(defmacro ^:private whole-reader-source []
+  (let [resource "clojure/data/json/jolt_whole_reader.ss"]
+    (if-let [url (io/resource resource)]
+      (slurp url)
+      (throw (ex-info "Missing data.json whole reader resource"
+                      {:resource resource})))))
+
+(def ^:private whole-source (whole-reader-source))
+
 (defonce ^:private state
   (atom {:backend nil :loaded? false :enabled-by-default? false
          :required-helper "pmap-fold-seq-order"
@@ -100,3 +109,17 @@
   Successful loading does not imply an active caller binding."
   []
   @string-reader-state)
+
+(defonce ^:private whole-reader
+  (delay (scheme/eval-string whole-source)))
+
+(defn load-reader!
+  "Return a source-only experimental whole-String reader for explicit binding
+  to clojure.data.json/*experimental-native-reader*. Scalar strings and numbers
+  retain existing decoders. Unsupported inputs/options decline to stock.
+  No global installation, Reader interception or standalone/AOT qualification."
+  []
+  (let [parse @whole-reader
+        token-reader (load-string-reader!)]
+    (fn [source _options decode-number]
+      (parse source token-reader decode-number))))

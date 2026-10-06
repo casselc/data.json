@@ -2,6 +2,12 @@
 
 ## Unreleased — experimental, fork-only
 
+- Add an opt-in source-only whole-String reader candidate. Native traversal
+  builds Jolt maps/vectors; stock scalar conversions retain number classes.
+  Key/value callbacks, incomplete/deep inputs and Reader input keep the portable
+  route; extra-data callbacks retain their original unread suffix. No global
+  installation, default change, AOT or throughput qualification is implied.
+
 - Reuse the qualified runtime-owned fixnum decimal codec in the opt-in guarded
   Jolt writer, avoiding the general formatter for ordinary integers. Big integers
   and runtimes without the helper retain the previous formatter. Live JSONWriter
