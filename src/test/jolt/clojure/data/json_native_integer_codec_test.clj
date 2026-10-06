@@ -14,7 +14,7 @@
   (binding [json/*experimental-native-writer* nil]
     (json/write-str value)))
 
-(deftest optional-codec-is-selected-and-bigints-decline
+(deftest optional-codec-is-selected-for-fixnums-and-bounded-wide-integers
   (let [check
         (scheme/eval-string
          "(lambda (operation)
@@ -26,7 +26,7 @@
                     (lambda (n) (set! calls (+ calls 1)) (original n))))
                 (lambda () (jolt-invoke0 operation) calls)
                 (lambda () (set! djn-fixnum-renderer original)))))")]
-    (is (= 3 (check #(is (= "[0,-17,999,9223372036854775807,-9223372036854775808]"
+    (is (= 7 (check #(is (= "[0,-17,999,9223372036854775807,-9223372036854775808]"
                            (encode [0 -17 999 Long/MAX_VALUE Long/MIN_VALUE]))))))))
 
 (deftest disabled-capability-retains-the-general-formatter
@@ -56,6 +56,20 @@
       (is (= (portable [7]) (encode [7])))
       (is (= "[\"custom-long\"]" (encode [7])))
       (finally (extend Long json/JSONWriter {:-write stock})))))
+
+(deftest wide-decimal-chunk-boundaries-preserve-stock-text
+  (let [render (scheme/proc "djn-integer-string")
+        baseline (scheme/proc "number->string")
+        values (concat
+                [1700000000000000000 1700000000000000001
+                 18446744073709551615N 18446744073709551616N]
+                (for [high [0 1 999999999 1000000000 9223372036 18446744073]
+                      low [0 1 10 99 999999998 999999999]
+                      sign [1 -1]]
+                  (* sign (+ (* high 1000000000N) low))))]
+    (doseq [value values]
+      (is (= (baseline value) (render value)))
+      (is (= (portable [value]) (encode [value]))))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (t/run-tests 'clojure.data.json-native-integer-codec-test)]

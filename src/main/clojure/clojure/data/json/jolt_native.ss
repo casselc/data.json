@@ -18,8 +18,9 @@
 ;; Optional runtime-owned decimal codec. Chez's general number->string goes
 ;; through its formatter/cache; Jolt already specializes fixnums without that
 ;; shared formatting state. Qualify the selected capability without imposing a
-;; new helper requirement on older source-mode runtimes. Big integers retain
-;; number->string; this never changes protocol dispatch or caches value text.
+;; new helper requirement on older source-mode runtimes. Wide wire integers
+;; reuse it by chunks; arbitrary big integers retain number->string. Neither
+;; route changes protocol dispatch or caches value text.
 (define djn-fixnum-renderer
   (guard (condition (else #f))
     (let ((render (and (top-level-bound? 'jolt-fixnum->string)
@@ -31,6 +32,26 @@
            render))))
 
 (define (djn-runtime-fixnum-enabled?) (and djn-fixnum-renderer #t))
+
+(define (djn-integer-string n)
+  (let ((render djn-fixnum-renderer))
+   (cond
+    ((and (fixnum? n) render) (render n))
+    ((and render (<= -9223372036854775808 n 18446744073709551615))
+     ;; Bounded wire integers need one wide division. Both decimal chunks are
+     ;; fixnums, so reuse the already behavior-qualified runtime codec.
+     (let* ((negative? (< n 0)) (magnitude (if negative? (- n) n))
+            (hi (quotient magnitude 1000000000))
+            (lo (remainder magnitude 1000000000))
+            (high (render hi)) (low (render lo))
+            (prefix (if negative? 1 0))
+            (end (+ prefix (string-length high) 9))
+            (out (make-string end #\0)))
+       (when negative? (string-set! out 0 #\-))
+       (string-copy! high 0 out prefix (string-length high))
+       (string-copy! low 0 out (- end (string-length low)) (string-length low))
+       out))
+    (else (number->string n)))))
 
 (define (djn-u16 cp out)
   (put-string out "\\u")
@@ -212,10 +233,7 @@
                          (sb-append! writer (if x "true" "false")))
                         ((and (integer? x) (exact? x)
                               (or (eq? impl plain-writer) (eq? impl bignum-writer)))
-                         (sb-append! writer
-                           (if (and (fixnum? x) djn-fixnum-renderer)
-                               (djn-fixnum-renderer x)
-                               (number->string x))))
+                         (sb-append! writer (djn-integer-string x)))
                         ((and (flonum? x) (finite? x) (eq? impl double-writer))
                          (sb-append! writer (jolt-flonum->string x)))
                         ((and (or (keyword? x) (symbol-t? x))

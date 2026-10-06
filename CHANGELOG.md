@@ -2,6 +2,12 @@
 
 ## Unreleased — experimental, fork-only
 
+- Render signed/unsigned 64-bit wide integers as two fixnum decimal chunks in
+  the opt-in guarded writer. Reuse the qualified runtime codec; unavailable
+  capability and arbitrary larger integers retain number->string. Preserve
+  bytes, live JSONWriter dispatch, scalar ownership and default/portable routes.
+  Scalar allocation improves; repeated Durable throughput remains unqualified.
+
 - Add an opt-in source-only whole-String reader candidate. Native traversal
   builds Jolt maps/vectors; stock scalar conversions retain number classes.
   Key/value callbacks, incomplete/deep inputs and Reader input keep the portable
