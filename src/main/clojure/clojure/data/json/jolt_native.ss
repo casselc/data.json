@@ -1,5 +1,6 @@
-;; Library-owned, opt-in Jolt encoder. Default calls have no key cache; optional
-;; payload closures cache keys only. No copied collection representation.
+;; Library-owned, opt-in Jolt encoder. Default calls have no caches; separate
+;; explicit factories cache keys only or keys plus stock string fragments.
+;; No copied collection representation.
 ;; Every JSON value checks the current protocol Var
 ; root and selects its live method through a core-owned resolution site.
 ;; The caller supplies a real StringWriter. Both native output and custom
@@ -188,6 +189,35 @@
                     (sb-append! writer encoded)))
                 (djn-string name writer flags))))))
 
+(define (djn-value-string value writer flags cache)
+  ;; Called ONLY after the live String JSONWriter resolved to stock. No method,
+  ;; callback or non-string value is cached. Flags qualify every hit, even if
+  ;; a payload contains nested calls with different escaping options.
+  (if (or (not cache) (fx>? (string-length value) 256))
+      (djn-string value writer flags)
+      (let* ((table (vector-ref cache 0))
+             (entry (hashtable-ref table value #f)))
+        (if (and entry
+                 (eq? (vector-ref entry 0) (vector-ref flags 0))
+                 (eq? (vector-ref entry 1) (vector-ref flags 1))
+                 (eq? (vector-ref entry 2) (vector-ref flags 2)))
+            (sb-append! writer (vector-ref entry 3))
+            (if (and (fx<=? (string-length value) 256)
+                     (fx<? (hashtable-size table) 128)
+                     (fx<? (vector-ref cache 1) 65536))
+                (let ((sink (host-new "StringWriter")))
+                  (djn-string value sink flags)
+                  (let* ((encoded (sb-str sink))
+                         (size (fx+ (string-length value) (string-length encoded))))
+                    (when (fx<=? (fx+ size (vector-ref cache 1)) 65536)
+                      ;; Do not retain a mutable Scheme string as a table key.
+                      (hashtable-set! table (string-copy value)
+                        (vector (vector-ref flags 0) (vector-ref flags 1)
+                                (vector-ref flags 2) encoded))
+                      (vector-set! cache 1 (fx+ size (vector-ref cache 1))))
+                    (sb-append! writer encoded)))
+                (djn-string value writer flags))))))
+
 (define (djn-write! value writer options stock . key-caches)
   ;; Stock vector ABI 1, captured in json.clj immediately after registrations:
   ;; dispatch/null/plain/double/bignum/named/string/map/array/default-options/tag.
@@ -202,7 +232,9 @@
   (let* ((dispatcher (pvec-nth! stock 0))
          (defaults (pvec-nth! stock 9))
          (flags (djn-flags options defaults))
-         (key-cache (and (pair? key-caches) (car key-caches))))
+         (key-cache (and (pair? key-caches) (car key-caches)))
+         (value-cache (and (pair? key-caches) (pair? (cdr key-caches))
+                           (cadr key-caches))))
     (if (not (and (string-writer? writer) flags))
         (jolt-invoke3 (var-cell-root djn-method-cell) value writer options)
         (let ((null-writer (pvec-nth! stock 1))
@@ -226,7 +258,9 @@
                     (let ((impl (djn-json-writer-site x)))
                       (cond
                         ((and (string? x) (eq? impl string-writer))
-                         (djn-string x writer flags))
+                         (if value-cache
+                             (djn-value-string x writer flags value-cache)
+                             (djn-string x writer flags)))
                         ((and (jolt-nil? x) (eq? impl null-writer))
                          (sb-append! writer "null"))
                         ((and (boolean? x) (eq? impl plain-writer))
@@ -290,5 +324,13 @@
   (let ((cache (vector (make-hashtable string-hash string=?) 0)))
     (lambda (value writer options stock)
       (djn-write! value writer options stock cache))))
+
+(define (djn-make-string-cache-writer)
+  ;; Separate explicit factory: existing key-only payload behavior is unchanged.
+  ;; Caller owns these bounded caches for exactly one serial payload.
+  (let ((keys (vector (make-hashtable string-hash string=?) 0))
+        (values (vector (make-hashtable string-hash string=?) 0)))
+    (lambda (value writer options stock)
+      (djn-write! value writer options stock keys values))))
 
 djn-write!

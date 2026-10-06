@@ -597,6 +597,67 @@
     ;; This captured string must survive later extraction and scratch close.
     (is (= "[\"a\\/\"," @prefix))))
 
+(deftest payload-string-cache-is-explicit-isolated-and-not-vacuous
+  (force prepared)
+  (let [writer (native/load-payload-string-caching-writer!)
+        cached #(binding [json/*experimental-native-writer* writer]
+                  (apply json/write-str %1 %2))]
+    (is (= ["[\"same\",\"same\"]" 1]
+           (@counted-native-call #(cached ["same" "same"] []))))
+    (is (= ["\"same\"" 0] (@counted-native-call #(cached "same" []))))
+    (let [fresh (native/load-payload-string-caching-writer!)]
+      (is (= ["\"same\"" 1]
+             (@counted-native-call
+              #(binding [json/*experimental-native-writer* fresh]
+                 (json/write-str "same"))))))
+    (doseq [options [[] [:escape-unicode false] [:escape-slash false]
+                     [:escape-js-separators false] [:escape-unicode true]
+                     [:indent true]]
+            value ["é😀/\n" "same" "\u2028\u2029" (apply str (repeat 300 "x"))]]
+      (is (= (apply portable value options) (cached value options))))))
+
+(deftest cached-string-still-observes-live-method-and-root
+  (force prepared)
+  (let [writer (native/load-payload-string-caching-writer!)
+        calls (atom 0)
+        change (Callback. (fn [out _]
+                            (swap! calls inc)
+                            (extend String json/JSONWriter
+                                    {:-write (fn [_ sink _] (.append sink "\"custom\""))})
+                            (.append out "0")))]
+    (try
+      (binding [json/*experimental-native-writer* writer]
+        (is (= "[\"same\",0,\"custom\"]" (json/write-str ["same" change "same"]))))
+      (is (= 1 @calls))
+      (finally (restore-string!)))
+    (let [root @#'json/-write]
+      (with-redefs [json/-write (fn [value out options]
+                                 (if (string? value) (.append out "\"root\"")
+                                     (root value out options)))]
+        (binding [json/*experimental-native-writer* writer]
+          (is (= "\"root\"" (json/write-str "same"))))))))
+
+(deftest payload-string-cache-enforces-retention-bounds
+  (force prepared)
+  (let [inspect (scheme/eval-string
+                 "(lambda (values options stock)
+                    (let ((cache (vector (make-hashtable string-hash string=?) 0))
+                          (sink (host-new \"StringWriter\")))
+                      (djn-write! values sink options stock #f cache)
+                      (jolt-vector (hashtable-size (vector-ref cache 0))
+                                   (vector-ref cache 1) (sb-str sink))))")
+        stock @#'json/native-writer-stock
+        check (fn [values]
+                (let [[entries chars wire] (inspect values json/default-write-options stock)]
+                  (is (<= entries 128))
+                  (is (<= chars 65536))
+                  (is (= (portable values) wire))
+                  [entries chars]))]
+    (is (= 128 (first (check (mapv #(str "value-" %) (range 200))))))
+    (let [values (mapv (fn [index] (str index (apply str (repeat 250 "\"")))) (range 200))]
+      (is (< (first (check values)) 128)))
+    (is (= [0 0] (check [(apply str (repeat 257 "x"))])))))
+
 (defn -main [& _]
   (let [result (run-tests 'clojure.data.json-native-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

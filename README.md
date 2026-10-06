@@ -67,6 +67,16 @@ realization order. Only boolean Unicode/slash/JavaScript-separator escape
 switches may differ from stock options; custom/unknown options use the portable
 writer before emission. No input or encoded field is cached.
 
+For repeated short strings, a separate experimental
+`native/load-payload-string-caching-writer!` returns a writer for **one serial
+payload**. It retains at most 128 stock-encoded string fragments and 65,536
+input-plus-output characters, accepting strings up to 256 characters. Every
+value still checks its live writer before a cache hit; escaping options qualify
+each hit. Obtain a fresh closure for each independent or concurrent payload,
+then discard it. This explicitly retains telemetry strings until discarded;
+it does not change the default or the existing key-only `load-payload-writer!`.
+This is source-only qualification, not a supported standalone/AOT backend.
+
 The clean-string candidate scans each ordinary string run once. If no character
 needs escaping under the three selected flags, it appends quotes and the original
 immutable string directly to the same StringWriter, without scratch extraction.

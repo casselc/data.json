@@ -95,6 +95,21 @@
   (load-writer!)
   ((scheme/proc "djn-make-key-cache-writer")))
 
+(defn load-payload-string-caching-writer!
+  "Return a source-only experimental writer for one caller-owned serial payload.
+  In addition to the existing key cache, this explicitly retains stock-encoded
+  string fragments: at most 128 entries and 65,536 key-plus-output characters,
+  with input strings limited to 256 characters. Discard after the payload.
+
+  Every value still resolves its current JSONWriter before consulting the cache;
+  custom writers, callbacks and dispatch methods are not cached. Escape flags
+  qualify each hit. Independent/concurrent payloads must use separate closures.
+  Unlike load-payload-writer!, this opt-in retains telemetry string values until
+  the caller discards the writer. No global/default or AOT qualification."
+  []
+  (load-writer!)
+  ((scheme/proc "djn-make-string-cache-writer")))
+
 (defn load-string-reader!
   "Return the source-only experimental String token reader for explicit binding
   to clojure.data.json/*experimental-native-string-reader*. Does not install a

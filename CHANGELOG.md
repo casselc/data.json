@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Add a separate source-only payload string-fragment cache factory. Preserve
+  live method/root checks and option-qualified output; cap retention to 128
+  stock-string entries/65,536 input-plus-output characters per serial payload.
+  Existing key-only/default factories remain unchanged; discard after use.
+
 - Render signed/unsigned 64-bit wide integers as two fixnum decimal chunks in
   the opt-in guarded writer. Reuse the qualified runtime codec; unavailable
   capability and arbitrary larger integers retain number->string. Preserve
