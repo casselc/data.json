@@ -135,14 +135,16 @@
 (deftest qualification-cache-does-not-hide-changed-default-flags
   (let [write (native/load-payload-byte-buffer-writer!)
         stock @#'json/native-writer-stock
-        options json/default-write-options]
+        options json/default-write-options
+        changed (assoc options :escape-unicode false :escape-slash false)]
     (doseq [[opts captured expected]
             [[options stock "[\"\\u00e9\\/\"]"]
-             [(assoc options :escape-unicode false :escape-slash false)
-              (assoc stock 9 (assoc options :escape-unicode false :escape-slash false))
+             [changed (assoc stock 9 changed)
               "[\"é/\"]"]
              [options stock "[\"\\u00e9\\/\"]"]]]
       (let [out (java.io.StringWriter.)]
+        ;; Reach flag qualification rather than the earlier identity decline.
+        (is (identical? opts (nth captured 9)))
         (write ["é/"] out opts captured)
         (is (= expected (.toString out)))))))
 

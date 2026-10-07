@@ -88,6 +88,13 @@ ASCII scan/UTF-8 conversion allocated extra temporary byte arrays and did not
 show a clear speedup, so it was removed. Escaping and 64KiB buffer-boundary
 tests remain. The retained continuation passes nine tests / 76 assertions.
 
+Read-only review found no implementation blocker but identified a weak cache
+test: its changed options and captured stock defaults were equal, not identical.
+The test now asserts identity before each call. An in-process accept-all-flags
+mutant is rejected with exactly one output mismatch and no errors; the corrected
+candidate passes nine tests / 79 assertions. This distinguishes rejection by
+the escape-flag guard from the earlier identity decline.
+
 The Go/Rust collector source audit and exact measurements are recorded in
 `/home/chuck/ai-src/evidence/observability-allocation-transfer-20261007.md`.
 The next larger opportunity is eliminating per-row materialized strings with
