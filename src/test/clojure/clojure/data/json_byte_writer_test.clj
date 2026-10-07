@@ -93,3 +93,61 @@
     (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
       (is (thrown? Throwable (native/write-terminated-row! ["prefix" Double/NaN] out))))
     (is (= "[\"prefix\"," (.toString out)))))
+
+(native/load-writer!)
+(def empty-fast-probe
+  (scheme/eval-string
+    "(lambda (run)
+       (let ((original djn-empty-default-vector!) (calls 0))
+         (dynamic-wind
+           (lambda ()
+             (set! djn-empty-default-vector!
+               (lambda (value out options stock)
+                 (when (and (pvec? value) (= (pvec-count value) 0))
+                   (set! calls (+ calls 1)))
+                 (original value out options stock))))
+           (lambda () (jolt-invoke0 run) calls)
+           (lambda () (set! djn-empty-default-vector! original)))))"))
+
+(deftest earlier-empty-vector-fast-path-is-preserved
+  (let [write (native/load-payload-byte-buffer-writer!)
+        out (java.io.StringWriter.)
+        calls (empty-fast-probe
+                #(write [] out json/default-write-options @#'json/native-writer-stock "\n"))]
+    (is (= 1 calls))
+    (is (= "[]\n" (.toString out)))))
+
+(deftype CatchNestedError []
+  json/JSONWriter
+  (-write [_ out _options]
+    (try (json/write-str ["inner" Double/NaN])
+         (catch Throwable _ nil))
+    (.append out (json/write-str ["recovered" 7]))))
+
+(deftest nested-error-restores-outer-context-and-idle-writer
+  (let [write (native/load-payload-byte-buffer-writer!)
+        out (java.io.StringWriter.)]
+    (binding [json/*experimental-native-writer* write]
+      (native/write-terminated-row! ["before" (CatchNestedError.) "after"] out)
+      (is (= "[\"before\",[\"recovered\",7],\"after\"]\n" (.toString out)))
+      (is (= "[\"fresh\",true]" (json/write-str ["fresh" true]))))))
+
+(deftest qualification-cache-does-not-hide-changed-default-flags
+  (let [write (native/load-payload-byte-buffer-writer!)
+        stock @#'json/native-writer-stock
+        options json/default-write-options]
+    (doseq [[opts captured expected]
+            [[options stock "[\"\\u00e9\\/\"]"]
+             [(assoc options :escape-unicode false :escape-slash false)
+              (assoc stock 9 (assoc options :escape-unicode false :escape-slash false))
+              "[\"é/\"]"]
+             [options stock "[\"\\u00e9\\/\"]"]]]
+      (let [out (java.io.StringWriter.)]
+        (write ["é/"] out opts captured)
+        (is (= expected (.toString out)))))))
+
+(deftest ascii-and-escaping-buffer-boundaries
+  (doseq [n [0 1 255 256 65534 65535 65536 65537]]
+    (doseq [tail ["" "/" "\"" "\\" "é😀\n"]]
+      (let [value [(str (apply str (repeat n "a")) tail)]]
+        (is (= (json/write-str value) (candidate value)))))))

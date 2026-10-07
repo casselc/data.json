@@ -69,3 +69,27 @@ cover a deliberately omitted-hook red control. Focused writer tests and the
 existing scalar-indexed Jolt compatibility runner pass. The generic JVM test
 namespace cannot be parsed by Jolt because it contains literal lone surrogates;
 that failure is not promoted to a candidate test pass.
+
+## Hoisted-context continuation
+
+The next experimental branch moves emitter helper closures to the payload
+factory, clears row-owned references after use, and snapshots/restores the
+active context for nested writes (including caught nested failures). It restores
+the earlier guarded empty-vector shortcut before allocating row context. A
+probe verifies that shortcut is actually reached, not merely wire-equivalent.
+Default-flag qualification is cached only by identity of the immutable captured
+options map; live protocol and method-root checks are not cached away.
+
+Against the reference above, the measured continuation allocated 104.30 MB for
+three encodes of 5,000 spans instead of 125.83 MB (about 17% less). Span samples
+were 170.4–183.7 ms; other signals' CPU results were mixed. This remains a
+component result, not a demonstrated full-pipeline speedup. A further clean
+ASCII scan/UTF-8 conversion allocated extra temporary byte arrays and did not
+show a clear speedup, so it was removed. Escaping and 64KiB buffer-boundary
+tests remain. The retained continuation passes nine tests / 76 assertions.
+
+The Go/Rust collector source audit and exact measurements are recorded in
+`/home/chuck/ai-src/evidence/observability-allocation-transfer-20261007.md`.
+The next larger opportunity is eliminating per-row materialized strings with
+an explicitly owned batch sink; no default writer or persistence policy has
+changed here.
