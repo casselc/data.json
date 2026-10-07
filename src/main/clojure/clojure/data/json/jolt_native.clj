@@ -111,7 +111,8 @@
   ((scheme/proc "djn-make-string-cache-writer")))
 
 (defmacro ^:private byte-writer-source []
-  (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss")))
+  (str (slurp (io/resource "clojure/data/json/jolt_byte_batch.ss")) "\n"
+       (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))))
 
 (def ^:private byte-source (byte-writer-source))
 (def ^:private byte-factory
@@ -135,6 +136,36 @@
   [row out]
   (json/*experimental-native-writer* row out json/default-write-options
                                     @#'clojure.data.json/native-writer-stock "\n"))
+
+(defn write-batch-text!
+  "Experimental source-only, serial JSONEachRow collector. Owns one byte buffer
+  for this call and returns immutable text once. Warm stock rows avoid row
+  strings; cold classification and custom writers still receive their real row-local
+  StringWriter prefix. Nested ordinary JSON writes keep their existing meaning.
+  Check UTF-8 budget after each complete row, before requesting the next row.
+  A trusted single-row writer may allocate before its size is known. No SQL,
+  WAL, admission, persistence or default backend selection is performed here."
+  [rows max-bytes]
+  (when-not (and (integer? max-bytes) (not (neg? max-bytes)))
+    (throw (ex-info "Invalid JSONEachRow byte limit" {:type ::invalid-limit})))
+  (when-not (or (nil? rows) (sequential? rows))
+    (throw (ex-info "JSONEachRow requires sequential rows" {:type ::invalid-rows})))
+  (let [write (load-payload-byte-buffer-writer!)
+        make (scheme/proc "djn-make-byte-batch")
+        size (scheme/proc "djn-byte-batch-size")
+        text (scheme/proc "djn-byte-batch-text")
+        batch (make)
+        stock @#'clojure.data.json/native-writer-stock]
+    (binding [json/*experimental-native-writer* write]
+      (loop [remaining (seq rows)]
+        (when (seq remaining)
+          (let [out (java.io.StringWriter.)]
+            (write (first remaining) out json/default-write-options stock "\n" batch))
+          (when (> (size batch) max-bytes)
+            (throw (ex-info "JSONEachRow output exceeds its byte limit"
+                            {:type ::output-limit})))
+          (recur (next remaining)))))
+    (text batch 0)))
 
 (defn load-string-reader!
   "Return the source-only experimental String token reader for explicit binding

@@ -108,13 +108,23 @@ An isolated continuation adds internal Chez collector storage in
 UTF-8 byte count, materialize immutable text at completion, and replace only
 the current row after an observable writer mutation. Seven focused storage
 checks cover row slices, non-ASCII byte counts, replacement and capacity growth.
-This storage is not yet wired into the JSON emitter or exporter and has no
-performance result or public backend selection.
+The collector is now wired into the source-only JSON emitter through
+`write-batch-text!`. Sixteen focused tests / 101 assertions pass, including
+real row-local prefixes, arbitrary writer mutation, retained completed writers,
+original error identity, nested writes, Unicode, growth and incremental budgets.
+It has no measured performance result or default backend selection yet.
 
 The intended emitter must preserve a separate real StringWriter view for each
 row. It should publish that row's prefix before observable classification or
 custom JSONWriter code, then reconcile any callback mutation back into the
-collector. Pure stock rows should never materialize intermediate row strings.
+collector. Warm callback-free stock rows avoid intermediate row strings. Cold
+protocol classification still publishes a row-local view; the runtime hook is
+not skipped based on a racy library-side purity guess. A causal test distinguishes
+cold publications and final batch materialization from one string per row.
 Nested writes still need independent scratch and context restoration. Keep
 row-completion byte-limit checks and lazy input realization order unchanged;
-do not claim the callback contract is preserved until those tests pass.
+The collector has no cross-call pool or retained payload. Its allocation limit
+remains a completed-row check, not a promise that trusted custom writers cannot
+allocate a large row. A separate chDB integration retains existing admission and
+close/release semantics; persistence is unchanged and is not qualified by these
+focused JSON tests.

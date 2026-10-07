@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Add an explicit source-only serial byte-batch collector. Warm stock values
+  avoid per-row strings; observable classifiers and custom writers retain real
+  row-local prefixes, mutation, nested calls and partial errors. Check the UTF-8
+  budget after each completed row; no default, AOT or persistence change.
+
 - Avoid recursive writer/scratch setup for a top-level empty vector with the
   captured default options. Resolve its live protocol writer exactly once;
   custom writers still run and non-default options keep the original path.

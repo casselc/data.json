@@ -9,12 +9,15 @@
         (abi-tag (keyword "clojure.data.json" "native-writer-v1"))
         (qualified-defaults #f)
         (writer #f) (options #f) (stock #f) (buf #f) (scratch #f)
-        (used 0) (flush-epoch 0))
+        (used 0) (flush-epoch 0)
+        (batch #f) (row-start 0) (exposed? #f) (ever-exposed? #f))
     (define site
       (make-protocol-method-site "clojure.data.json/JSONWriter" "-write"
         (lambda () (when writer (flush!)))))
-  (define (flush!)
+  (define (flush-buffer!)
     (unless (fx=? used 0)
+      (if batch
+          (djn-byte-batch-append! batch buf 0 used)
       (let ((bytes (make-bytevector used)))
         (bytevector-copy! buf 0 bytes 0 used)
         (let ((text (utf8->string bytes)))
@@ -23,11 +26,26 @@
           ;; the caller's subsequent toString. Nonempty sinks append.
           (if (= (sb-length writer) 0)
               (sb-set! writer text)
-              (sb-append! writer text)))
-        (set! used 0)))
+              (sb-append! writer text)))))
+      (set! used 0))
     (set! flush-epoch (+ flush-epoch 1)))
+  (define (flush!)
+    (flush-buffer!)
+    (when batch
+      ;; Publish only this row, never the preceding rows in the collector.
+      (sb-set! writer (djn-byte-batch-text batch row-start))
+      (set! exposed? #t) (set! ever-exposed? #t)))
+  (define (sync!)
+    (when (and batch exposed?)
+      ;; User code may modify or clear the real StringWriter, not just append.
+      (djn-byte-batch-replace-row! batch row-start (sb-str writer))
+      (set! exposed? #f)))
+  (define (append-fallback! target call-batch)
+    (when call-batch
+      (let ((bytes (string->utf8 (sb-str target))))
+        (djn-byte-batch-append! call-batch bytes 0 (bytevector-length bytes)))))
   (define (byte! b)
-    (when (fx=? used 65536) (flush!))
+    (when (fx=? used 65536) (flush-buffer!))
     (bytevector-u8-set! buf used b)
     (set! used (fx+ used 1)))
   (define (ascii! s)
@@ -57,7 +75,7 @@
   (define (append-bytes! bytes)
     (let loop ((offset 0))
       (unless (= offset (bytevector-length bytes))
-        (when (= used 65536) (flush!))
+        (when (= used 65536) (flush-buffer!))
         (let ((n (min (- (bytevector-length bytes) offset) (- 65536 used))))
           (bytevector-copy! bytes offset buf used n)
           (set! used (+ used n)) (loop (+ offset n))))))
@@ -95,12 +113,14 @@
                   (digits q (fx- i 1))))))))
   (define (invoke! impl x)
     (flush!)
-    (jolt-invoke3 impl x writer options))
+    (let ((result (jolt-invoke3 impl x writer options)))
+      (sync!) result))
   (define (emit! x)
     (let ((root (var-cell-root djn-method-cell)))
       (if (not (eq? root (pvec-nth! stock 0)))
           (invoke! root x)
           (let ((impl (site x)))
+            (sync!)
             (cond
               ((and (string? x) (eq? impl (pvec-nth! stock 6))) (string! x))
               ((and (jolt-nil? x) (eq? impl (pvec-nth! stock 1))) (ascii! "null"))
@@ -124,7 +144,8 @@
                  (lambda (k child printed?)
                    (let ((name (if (string? k) k
                                    (begin (flush!)
-                                     (jolt-invoke1 (pmap-fast-get options djn-key-fn pmap-absent) k)))))
+                                     (let ((name (jolt-invoke1 (pmap-fast-get options djn-key-fn pmap-absent) k)))
+                                       (sync!) name)))))
                      ;; Unknown equality representations may themselves
                      ;; be observable; preserve the stock sentinel check.
                      (unless (or (jolt-nil? child) (string? child) (boolean? child)
@@ -133,17 +154,25 @@
                      (unless (string? name)
                        (flush!)
                        (jolt-throw (host-new "Exception" "JSON object keys must be strings")))
-                     (if (jolt=2 (pmap-fast-get options djn-value-fn pmap-absent) child) printed?
+                     (let ((omit? (jolt=2 (pmap-fast-get options djn-value-fn pmap-absent) child)))
+                       (sync!)
+                     (if omit? printed?
                          (begin (when printed? (byte! 44))
-                                (string! name) (byte! 58) (emit! child) #t)))) #f)
+                                (string! name) (byte! 58) (emit! child) #t))))) #f)
                (byte! 125))
               (else (invoke! impl x)))))))
 
     (lambda (value call-writer call-options call-stock . endings)
       (unless (or (null? endings)
-                  (and (null? (cdr endings)) (equal? (car endings) "\n")))
+                  (and (equal? (car endings) "\n")
+                       (or (null? (cdr endings))
+                           (and (null? (cddr endings))
+                                (vector? (cadr endings))
+                                (= (vector-length (cadr endings)) 2)
+                                (bytevector? (vector-ref (cadr endings) 0))))))
         (error 'byte-writer "only a row newline terminator is supported"))
-      (let ((ending (if (null? endings) "" (car endings))))
+      (let ((ending (if (null? endings) "" (car endings)))
+            (call-batch (and (pair? endings) (pair? (cdr endings)) (cadr endings))))
         (if (not (and (pvec? call-stock) (fx=? (pvec-count call-stock) 11)
                       (eq? (pvec-nth! call-stock 10) abi-tag)
                       (string-writer? call-writer)
@@ -156,25 +185,38 @@
                                         djn-escape-keys)
                                (begin (set! qualified-defaults call-options) #t)))))
             (begin (djn-write! value call-writer call-options call-stock)
-                   (unless (string=? ending "") (sb-append! call-writer ending)))
+                   (unless (string=? ending "") (sb-append! call-writer ending))
+                   (append-fallback! call-writer call-batch))
             (if (djn-empty-default-vector! value call-writer call-options call-stock)
                 (begin
                   ;; Preserve the earlier native empty-vector win, including
                   ;; live custom vector dispatch, before allocating row state.
                   (unless (string=? ending "") (sb-append! call-writer ending))
+                  (append-fallback! call-writer call-batch)
                   jolt-nil)
             (let ((previous (and writer
-                                 (vector writer options stock buf used flush-epoch scratch)))
+                                 (vector writer options stock buf used flush-epoch scratch
+                                         batch row-start exposed? ever-exposed?)))
                   (loan (or spare
                             (vector (make-bytevector 65536) (make-bytevector 21)))))
               (set! spare #f)
               (set! writer call-writer) (set! options call-options) (set! stock call-stock)
               (set! buf (vector-ref loan 0)) (set! scratch (vector-ref loan 1))
               (set! used 0) (set! flush-epoch 0)
+              (set! batch call-batch)
+              (set! row-start (if batch (djn-byte-batch-size batch) 0))
+              (set! exposed? #f) (set! ever-exposed? #f)
               (dynamic-wind jolt-finally-in
                 (lambda () (emit! value) (ascii! ending))
                 (lambda ()
-                  (dynamic-wind jolt-finally-in flush!
+                  (dynamic-wind jolt-finally-in
+                    (lambda ()
+                      (sync!) (flush-buffer!)
+                      ;; An observer may retain the actual writer after return.
+                      ;; Publish the completed local row, including its
+                      ;; terminator just like the caller's old row adapter.
+                      (when (and batch ever-exposed?)
+                        (sb-set! writer (djn-byte-batch-text batch row-start))))
                     (lambda ()
                       (if previous
                           (begin
@@ -184,12 +226,18 @@
                             (set! buf (vector-ref previous 3))
                             (set! used (vector-ref previous 4))
                             (set! flush-epoch (vector-ref previous 5))
-                            (set! scratch (vector-ref previous 6)))
+                            (set! scratch (vector-ref previous 6))
+                            (set! batch (vector-ref previous 7))
+                            (set! row-start (vector-ref previous 8))
+                            (set! exposed? (vector-ref previous 9))
+                            (set! ever-exposed? (vector-ref previous 10)))
                           (begin
                             ;; Idle factories never retain a writer, row or
                             ;; operation-specific stock/options capability.
                             (set! writer #f) (set! options #f) (set! stock #f)
                             (set! buf #f) (set! scratch #f)
+                            (set! batch #f) (set! row-start 0) (set! exposed? #f)
+                            (set! ever-exposed? #f)
                             (set! used 0) (set! flush-epoch 0)))
                       (unless spare (set! spare loan))))))
               jolt-nil)))))))

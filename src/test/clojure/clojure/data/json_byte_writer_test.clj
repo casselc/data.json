@@ -153,3 +153,105 @@
     (doseq [tail ["" "/" "\"" "\\" "é😀\n"]]
       (let [value [(str (apply str (repeat n "a")) tail)]]
         (is (= (json/write-str value) (candidate value)))))))
+
+(deftest batch-stock-wire-and-buffer-growth
+  (doseq [rows [[] [nil true false 1 -1 1.25 "é😀/"]
+                [[1 "x"] {"a" "é" "b" [nil true]} []]
+                [[(apply str (repeat 70000 "x"))] ["last"]]]]
+    (let [expected (apply str (map #(str (json/write-str %) "\n") rows))]
+      (is (= expected (native/write-batch-text! rows 1000000))))))
+
+(def batch-materialization-probe
+  (scheme/eval-string
+    "(lambda (run)
+       (let ((original djn-byte-batch-text) (calls 0))
+         (dynamic-wind
+           (lambda ()
+             (set! djn-byte-batch-text
+               (lambda (batch start)
+                 (set! calls (+ calls 1)) (original batch start))))
+           (lambda () (jolt-invoke0 run) calls)
+           (lambda () (set! djn-byte-batch-text original)))))"))
+
+(deftest warm-stock-rows-do-not-materialize-per-row
+  ;; Cold method-family resolution must publish its view before classification.
+  ;; The current core hook only omits proven callback-free warm family hits.
+  (native/load-payload-byte-buffer-writer!)
+  (let [rows (vec (repeat 20 ["constant"]))
+        output (atom nil)
+        calls (batch-materialization-probe #(reset! output (native/write-batch-text! rows 1000)))]
+    (is (= (apply str (repeat 20 "[\"constant\"]\n")) @output))
+    ;; Vector + String cold boundaries, completed escaped first row, final batch.
+    (is (= 4 calls))))
+
+(deftest batch-receiver-predicate-observes-row-local-prefix
+  (let [write (native/load-payload-byte-buffer-writer!)
+        make (scheme/proc "djn-make-byte-batch")
+        text (scheme/proc "djn-byte-batch-text")
+        batch (make) out (java.io.StringWriter.)
+        stock @#'json/native-writer-stock
+        original (java.io.StringWriter.)
+        old-write (native/load-writer!)
+        row ["prefix" true "suffix"]]
+    (write [0] (java.io.StringWriter.) json/default-write-options stock "\n" batch)
+    (let [observed (predicate-probe out #(write row out json/default-write-options stock "\n" batch))
+          expected (predicate-probe original #(old-write row original json/default-write-options stock))]
+      (is (= expected observed))
+      (is (= "[0]\n[\"prefix\",true,\"suffix\"]\n" (text batch 0)))
+      (is (= "[\"prefix\",true,\"suffix\"]\n" (.toString out))))))
+
+(deftest batch-custom-writer-observes-only-current-row
+  (reset! seen [])
+  (is (= "[0]\n[\"prefix\",\"custom\",\"suffix\"]\n[2]\n"
+         (native/write-batch-text! [[0] ["prefix" (PrefixValue.) "suffix"] [2]] 1000)))
+  (is (= ["[\"prefix\","] @seen)))
+
+(def retained-rows (atom []))
+(def retained-error (ex-info "synthetic retained-writer error" {:type ::retained-error}))
+(deftype RetainWriter [fail?]
+  json/JSONWriter
+  (-write [_ out options]
+    (swap! retained-rows conj out)
+    (json/write "retained" out options)
+    (when fail? (throw retained-error))))
+
+(deftest batch-retained-writers-have-completed-local-row-or-error-prefix
+  (reset! retained-rows [])
+  (let [row ["before" (RetainWriter. false) "after"]]
+    (is (= "[0]\n[\"before\",\"retained\",\"after\"]\n[2]\n"
+           (native/write-batch-text! [[0] row [2]] 1000)))
+    (is (= "[\"before\",\"retained\",\"after\"]\n"
+           (.toString (first @retained-rows)))))
+  (reset! retained-rows [])
+  (is (identical? retained-error
+                  (try (native/write-batch-text! [[0] ["before" (RetainWriter. true) "after"]] 1000)
+                       nil (catch Throwable e e))))
+  (is (= "[\"before\",\"retained\"" (.toString (first @retained-rows)))))
+
+(deftype ReplacePrefix []
+  json/JSONWriter
+  (-write [_ out options]
+    ;; The current Jolt model lacks StringWriter.getBuffer. Exercise the actual
+    ;; native writer mutation via its runtime-owned setter, not a fake sink.
+    ((scheme/proc "sb-set!") out "[")
+    (json/write "replacement" out options)))
+
+(deftest batch-reconciles-custom-prefix-replacement-and-nested-error
+  (doseq [value [(ReplacePrefix.) (CatchNestedError.) (NestedValue.)]]
+    (let [rows [[0] ["before" value "after"] [2]]
+          expected (apply str (map #(str (candidate %) "\n") rows))]
+      (is (= expected (native/write-batch-text! rows 1000))))))
+
+(deftest batch-budget-stops-before-next-unchunked-row
+  (let [visits (atom [])
+        rows ((fn walk [values]
+                (lazy-seq (when (seq values)
+                            (swap! visits conj (first values))
+                            (cons (first values) (walk (rest values))))))
+              [[1] [2] [3]])]
+    (is (= ::native/output-limit
+           (:type (ex-data (try (native/write-batch-text! rows 3)
+                               nil (catch Throwable e e))))))
+    (is (= [[1]] @visits)))
+  (is (= "[1]\n" (native/write-batch-text! [[1]] 4)))
+  (is (= "" (native/write-batch-text! [] 0))))
