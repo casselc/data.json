@@ -70,3 +70,8 @@
   other inputs retain the existing validation and public fallback behavior.
   This is an experimental performance checkpoint, not a measured throughput
   improvement or promotion of the guarded writer to the default backend.
+# Experimental work
+
+- Add a source-only byte-buffer writer integration spike, explicit newline
+  row adapter, and callback-prefix tests. Defaults are unchanged. The current
+  adapter is not an established performance improvement and is not adopted.

@@ -1,6 +1,6 @@
 (ns clojure.data.json.jolt-native
   "Explicit, source-only qualification loader for data.json's guarded backend."
-  (:require [clojure.data.json]
+  (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [jolt.scheme :as scheme]))
 
@@ -109,6 +109,32 @@
   []
   (load-writer!)
   ((scheme/proc "djn-make-string-cache-writer")))
+
+(defmacro ^:private byte-writer-source []
+  (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss")))
+
+(def ^:private byte-source (byte-writer-source))
+(def ^:private byte-factory
+  (delay (do (load-writer!) (scheme/eval-string byte-source))))
+
+(defn load-payload-byte-buffer-writer!
+  "Experimental default-option byte sink. Flushes to the caller's real
+  StringWriter before observable protocol classification, custom writers, and
+  exceptional departure. Unsupported options retain the existing guarded path.
+  Owns at most one reusable 64KiB byte scratch plus decimal scratch when idle;
+  nested writes obtain separate loans. One serial payload only; never share
+  the returned writer between parallel workers. Discard it after the payload.
+  Requires the observable-boundary runtime helper; not standalone qualified."
+  []
+  (@byte-factory))
+
+(defn write-terminated-row!
+  "Internal opt-in row adapter for a bound byte-buffer writer. Emits the row
+  newline before final materialization; nested JSON writes retain normal
+  four-argument behavior. Not a general JSON option or persistence operation."
+  [row out]
+  (json/*experimental-native-writer* row out json/default-write-options
+                                    @#'clojure.data.json/native-writer-stock "\n"))
 
 (defn load-string-reader!
   "Return the source-only experimental String token reader for explicit binding
