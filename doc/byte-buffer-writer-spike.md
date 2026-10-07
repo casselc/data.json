@@ -100,3 +100,21 @@ The Go/Rust collector source audit and exact measurements are recorded in
 The next larger opportunity is eliminating per-row materialized strings with
 an explicitly owned batch sink; no default writer or persistence policy has
 changed here.
+
+## Batch-owned sink work in progress
+
+An isolated continuation adds internal Chez collector storage in
+`jolt_byte_batch.ss`: append owned bytes into one growable buffer, expose its
+UTF-8 byte count, materialize immutable text at completion, and replace only
+the current row after an observable writer mutation. Seven focused storage
+checks cover row slices, non-ASCII byte counts, replacement and capacity growth.
+This storage is not yet wired into the JSON emitter or exporter and has no
+performance result or public backend selection.
+
+The intended emitter must preserve a separate real StringWriter view for each
+row. It should publish that row's prefix before observable classification or
+custom JSONWriter code, then reconcile any callback mutation back into the
+collector. Pure stock rows should never materialize intermediate row strings.
+Nested writes still need independent scratch and context restoration. Keep
+row-completion byte-limit checks and lazy input realization order unchanged;
+do not claim the callback contract is preserved until those tests pass.
