@@ -255,3 +255,43 @@
     (is (= [[1]] @visits)))
   (is (= "[1]\n" (native/write-batch-text! [[1]] 4)))
   (is (= "" (native/write-batch-text! [] 0))))
+
+(deftest batch-empty-fast-path-budget-is-byte-exact
+  (is (= "[]\n" (native/write-batch-text! [[]] 3)))
+  (is (= ::native/output-limit
+         (:type (ex-data (try (native/write-batch-text! [[]] 2)
+                             nil (catch Throwable error error))))))
+  (let [visits (atom [])
+        rows ((fn walk [values]
+                (lazy-seq (when (seq values)
+                            (swap! visits conj (first values))
+                            (cons (first values) (walk (rest values))))))
+              [[] [42] [3]])]
+    (is (= ::native/output-limit
+           (:type (ex-data (try (native/write-batch-text! rows 3)
+                               nil (catch Throwable error error))))))
+    (is (= [[] [42]] @visits))))
+
+(deftype LargeReplacement [text]
+  json/JSONWriter
+  (-write [_ out _]
+    ((scheme/proc "sb-set!") out (str "[" (json/write-str text) ",false"))))
+
+(deftest batch-replacement-growth-preserves-adjacent-rows-and-budget
+  (let [text (apply str (repeat 70000 "a"))
+        rows [[0] ["old-prefix" (LargeReplacement. text)] [2]]
+        expected (str "[0]\n[" (json/write-str text) ",false]\n[2]\n")
+        size (alength (.getBytes expected "UTF-8"))]
+    (is (= expected (native/write-batch-text! rows size)))
+    (is (= ::native/output-limit
+           (:type (ex-data (try (native/write-batch-text! rows (dec size))
+                               nil (catch Throwable error error))))))))
+
+(deftest batch-shrinking-replacement-updates-budget
+  (let [rows [[(apply str (repeat 100 "a")) (ReplacePrefix.)]]
+        expected "[\"replacement\"]\n"
+        size (count expected)]
+    (is (= expected (native/write-batch-text! rows size)))
+    (is (= ::native/output-limit
+           (:type (ex-data (try (native/write-batch-text! rows (dec size))
+                               nil (catch Throwable error error))))))))

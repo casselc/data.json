@@ -128,3 +128,8 @@ remains a completed-row check, not a promise that trusted custom writers cannot
 allocate a large row. A separate chDB integration retains existing admission and
 close/release semantics; persistence is unchanged and is not qualified by these
 focused JSON tests.
+
+The internal collector invocation requires a fresh, empty StringWriter for each
+row, including fallback and empty-vector branches. `write-batch-text!` owns and
+enforces this construction; do not reuse a previous row's writer to save an
+allocation. The caller cannot access its opaque batch storage through this API.
