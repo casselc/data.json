@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Copy formatted integer digits from the opt-in emitter's existing scratch
+  storage in bulk, preserving buffer-boundary flushes and exact numeric bytes.
+  No extra digit buffer, changed integer range, or default writer change.
+
 - Move the opt-in byte-batch row-demand loop into Chez, avoiding per-row
   Clojure/Scheme invocation and boxed budget checks. Preserve lazy demand,
   fresh row-local writers, live default options, and exception identity.

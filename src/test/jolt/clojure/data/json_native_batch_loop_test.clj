@@ -71,6 +71,16 @@
              (native/write-batch-text! [change "é/"] 100)))
       (finally (alter-var-root #'json/default-write-options (constantly original))))))
 
+(deftest integer-scratch-copy-spans-output-buffer-boundaries
+  ;; Place the sign/digits across every relevant boundary, not merely in an
+  ;; otherwise empty row. Wide unsigned values and fallback bignums stay exact.
+  (doseq [length [65510 65512 65515 65516 65517 65518 65519 65520 65530 65535 65536]
+          value [0 -1 Long/MIN_VALUE Long/MAX_VALUE 18446744073709551615N
+                 999999999999999999999999999999999999N]]
+    (let [rows [[(apply str (repeat length "a")) value] [42]]
+          expected (stock rows)]
+      (is (= expected (native/write-batch-text! rows Long/MAX_VALUE))))))
+
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'clojure.data.json-native-batch-loop-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))
