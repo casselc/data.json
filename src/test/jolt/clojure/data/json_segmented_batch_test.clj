@@ -79,6 +79,51 @@
              (:type (ex-data (try (native/write-prefixed-batch-text! prefix rows (dec size))
                                  nil (catch Throwable error error)))))))))
 
+(deftest owned-byte-output-parity-boundaries-and-independent-arrays
+  (doseq [n [0 1 65530 65535 65536 131071]]
+    (let [prefix "INSERT INTO t FORMAT JSONCompactEachRow\n"
+          rows [[(apply str (repeat n "a"))] ["é😀/\n" false] []]
+          payload (stock rows) budget (alength (.getBytes payload "UTF-8"))
+          output (native/write-prefixed-batch-bytes! prefix rows budget)]
+      (is (bytes? output))
+      (is (java.util.Arrays/equals (.getBytes (str prefix payload) "UTF-8") output))
+      (aset-byte output 0 (byte 88))
+      (is (java.util.Arrays/equals (.getBytes (str prefix payload) "UTF-8")
+                                  (native/write-prefixed-batch-bytes! prefix rows budget)))
+      (is (= ::native/output-limit
+             (:type (ex-data (try (native/write-prefixed-batch-bytes! prefix rows (dec budget))
+                                 nil (catch Throwable error error))))))))
+  (is (= "" (String. (native/write-prefixed-batch-bytes! "" [] 0) "UTF-8")))
+  (is (= "β😀" (String. (native/write-prefixed-batch-bytes! "β😀" [] 0) "UTF-8"))))
+
+(deftest owned-bytes-retain-row-local-custom-writer-and-single-pass-failure-effects
+  (let [seen (atom []) retained (atom nil)
+        replacement (reify json/JSONWriter
+                      (-write [_ out _]
+                        (swap! seen conj (.toString out))
+                        (reset! retained out)
+                        ((scheme/proc "sb-set!") out "[42")))
+        output (native/write-prefixed-batch-bytes! "prefix" [[0] [1 replacement 2]] 100)]
+    (is (= "prefix[0]\n[42,2]\n" (String. output "UTF-8")))
+    (is (= ["[1,"] @seen))
+    (is (= "[42,2]\n" (.toString @retained)))
+    ((scheme/proc "sb-set!") @retained "changed")
+    (is (= "prefix[0]\n[42,2]\n" (String. output "UTF-8"))))
+  (let [visits (atom [])
+        rows ((fn walk [values]
+                (lazy-seq (when (seq values)
+                            (swap! visits conj (first values))
+                            (cons (first values) (walk (rest values)))))) [1 2 3])]
+    (is (= ::native/output-limit
+           (:type (ex-data (try (native/write-prefixed-batch-bytes! "prefix" rows 1)
+                               nil (catch Throwable error error))))))
+    (is (= [1] @visits)))
+  (let [error (ex-info "original" {:expected true})
+        bad (reify json/JSONWriter (-write [_ _ _] (throw error)))]
+    (is (identical? error (try (native/write-prefixed-batch-bytes! "prefix" [bad] 0)
+                              nil (catch Throwable observed observed))))
+    (is (nil? json/*experimental-native-writer*))))
+
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'clojure.data.json-segmented-batch-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

@@ -20,7 +20,7 @@
         (vector-set! batch 3 (fx+ (vector-ref batch 3) n))
         (loop (fx+ offset n) (fx- remaining n))))))
 
-(define (djn-byte-batch-text batch start)
+(define (djn-byte-batch-copy-bytes batch start)
   (let* ((end (vector-ref batch 3))
          (n (fx- end start))
          (bytes (make-bytevector n)))
@@ -35,7 +35,14 @@
           (begin
             (copy-part! (car parts) 65536 position)
             (loop (cdr parts) (fx+ position 65536)))))
-    (utf8->string bytes)))
+    bytes))
+
+(define (djn-byte-batch-text batch start)
+  (utf8->string (djn-byte-batch-copy-bytes batch start)))
+
+(define (djn-byte-batch-owned-bytes batch start)
+  ;; Adopt only this fresh flattened copy, never an internal mutable chunk.
+  (na-owned-bv->bytearray (djn-byte-batch-copy-bytes batch start)))
 
 (define (djn-byte-batch-truncate! batch start)
   ;; A custom writer can shrink its current row. Prefix chunks stay unchanged;

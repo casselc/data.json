@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Add explicit serial prefixed UTF-8 byte output without final whole-payload
+  String construction. Return a fresh independent array; keep row-local writer
+  views, custom replacement, ordered effects and payload budgets unchanged.
+  Existing text/default/AOT behavior and persistence contracts are unchanged.
+
 - Add explicit prefixed byte-batch text materialization to avoid constructing
   a full payload String before copying it behind a caller's fixed prefix.
   Prefix bytes are excluded from the row budget and invisible to row-local

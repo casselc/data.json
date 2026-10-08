@@ -137,7 +137,7 @@
   (json/*experimental-native-writer* row out json/default-write-options
                                     @#'clojure.data.json/native-writer-stock "\n"))
 
-(defn write-prefixed-batch-text!
+(defn- write-prefixed-batch-output!
   "Experimental source-only, serial JSONEachRow collector. Owns one byte buffer
   for this call and returns immutable text once. Warm stock rows avoid row
   strings; cold classification and custom writers still receive their real row-local
@@ -147,7 +147,7 @@
   WAL, admission, persistence or default backend selection is performed here.
   Prefix is caller-supplied immutable text, excluded from the payload budget
   and invisible to row-local writers. The complete output materializes once."
-  [prefix rows max-bytes]
+  [prefix rows max-bytes finalizer]
   (when-not (string? prefix)
     (throw (ex-info "JSONEachRow prefix requires a String" {:type ::invalid-prefix})))
   (when-not (and (integer? max-bytes) (not (neg? max-bytes)))
@@ -157,7 +157,7 @@
   (let [write (load-payload-byte-buffer-writer!)
         make (scheme/proc "djn-make-byte-batch")
         size (scheme/proc "djn-byte-batch-size")
-        text (scheme/proc "djn-byte-batch-text")
+        finish (scheme/proc finalizer)
         prepend (scheme/proc "djn-byte-batch-prefix!")
         batch (make)
         _ (prepend batch prefix)
@@ -172,7 +172,25 @@
             (throw (ex-info "JSONEachRow output exceeds its byte limit"
                             {:type ::output-limit})))
           (recur (next remaining)))))
-    (text batch 0)))
+    (finish batch 0)))
+
+(defn write-prefixed-batch-text!
+  "Return immutable prefixed JSONEachRow text through the serial collector.
+  Prefix is outside the row budget and invisible to row-local custom writers.
+  See write-prefixed-batch-bytes! for the explicit independent byte result."
+  [prefix rows max-bytes]
+  (write-prefixed-batch-output! prefix rows max-bytes "djn-byte-batch-text"))
+
+(defn write-prefixed-batch-bytes!
+  "Experimental source-only serial prefixed JSONEachRow UTF-8 output.
+  Return a fresh caller-owned byte array, not an internal mutable chunk/view.
+  Shares exactly the text collector's row dispatch, real row-local writer,
+  replacement/error/one-pass input effects and newline-inclusive payload budget.
+  Prefix is excluded from the payload budget. Row-local text remains observable;
+  only final whole-output String materialization is avoided. No SQL ownership,
+  persistence, default/AOT selection or array pinning guarantee is added."
+  [prefix rows max-bytes]
+  (write-prefixed-batch-output! prefix rows max-bytes "djn-byte-batch-owned-bytes"))
 
 (defn write-batch-text!
   "Encode bounded rows without a prefix; see write-prefixed-batch-text!."
