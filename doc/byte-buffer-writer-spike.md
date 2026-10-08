@@ -22,6 +22,15 @@ inside the final materialization, while nested JSON calls remain unterminated.
 Errors do not append a success newline. It requires the bound byte writer;
 it is not a new ordinary JSON option or a durable operation.
 
+The byte-batch collector's demand loop now calls the runtime's existing
+`jolt-seq`, `jolt-first`, and `jolt-next` directly in Chez. It still checks the
+budget after a completed row and before demanding the next row. Every row gets
+a fresh real StringWriter, including rows with custom writers that retain it.
+Default options are read live for each row; nested calls and failures retain
+the existing writer context cleanup. This change neither buffers all lazy rows
+nor changes the persistence boundary. The `:jolt-native-batch-loop-test` alias
+checks the actual compiled runtime without injecting runtime source.
+
 ## What was measured
 
 Runtime bcb376a0, Chez10.4.1, source-loaded edited method site; no new compiled

@@ -152,20 +152,13 @@
     (throw (ex-info "JSONEachRow requires sequential rows" {:type ::invalid-rows})))
   (let [write (load-payload-byte-buffer-writer!)
         make (scheme/proc "djn-make-byte-batch")
-        size (scheme/proc "djn-byte-batch-size")
-        text (scheme/proc "djn-byte-batch-text")
+        write-rows (scheme/proc "djn-byte-batch-write-rows!")
         batch (make)
-        stock @#'clojure.data.json/native-writer-stock]
+        stock @#'clojure.data.json/native-writer-stock
+        overflow (fn [] (throw (ex-info "JSONEachRow output exceeds its byte limit"
+                                       {:type ::output-limit})))]
     (binding [json/*experimental-native-writer* write]
-      (loop [remaining (seq rows)]
-        (when (seq remaining)
-          (let [out (java.io.StringWriter.)]
-            (write (first remaining) out json/default-write-options stock "\n" batch))
-          (when (> (size batch) max-bytes)
-            (throw (ex-info "JSONEachRow output exceeds its byte limit"
-                            {:type ::output-limit})))
-          (recur (next remaining)))))
-    (text batch 0)))
+      (write-rows rows write stock batch max-bytes overflow))))
 
 (defn load-string-reader!
   "Return the source-only experimental String token reader for explicit binding

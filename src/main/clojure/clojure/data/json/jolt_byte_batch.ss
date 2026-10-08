@@ -30,6 +30,21 @@
 
 (define (djn-byte-batch-size batch) (vector-ref batch 1))
 
+;; Preserve the original seq/first/next demand loop, including lazy inputs.
+;; Do not reuse row writers: custom code may retain
+;; their identity and completed row-local output. Resolve live default options
+;; for each row, just as the original Clojure loop does.
+(define (djn-byte-batch-write-rows! rows write stock batch max-bytes overflow)
+  (let ((options-cell (jolt-var "clojure.data.json" "default-write-options")))
+    (let loop ((remaining (jolt-seq rows)))
+      (unless (jolt-nil? (jolt-seq remaining))
+        (write (jolt-first remaining) (host-new "StringWriter")
+               (var-cell-deref options-cell) stock "\n" batch)
+        (when (> (djn-byte-batch-size batch) max-bytes)
+          (jolt-invoke0 overflow))
+        (loop (jolt-next remaining)))))
+  (djn-byte-batch-text batch 0))
+
 ;; Keep these operations opaque at the Clojure edge, rather than exporting the
 ;; vector representation. Borrowed inputs are copied; no caller bytes retained.
 (jolt-vector djn-make-byte-batch djn-byte-batch-append!

@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Move the opt-in byte-batch row-demand loop into Chez, avoiding per-row
+  Clojure/Scheme invocation and boxed budget checks. Preserve lazy demand,
+  fresh row-local writers, live default options, and exception identity.
+  No default encoder, JSON/WAL format, persistence, or AOT change.
+
 - Add an explicit source-only serial byte-batch collector. Warm stock values
   avoid per-row strings; observable classifiers and custom writers retain real
   row-local prefixes, mutation, nested calls and partial errors. Check the UTF-8
