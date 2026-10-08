@@ -1,15 +1,16 @@
 (ns clojure.data.json-byte-writer-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.java.io :as io]
+            [clojure.string :as string]
             [clojure.data.json :as json]
             [clojure.data.json.jolt-native :as native]
             [jolt.scheme :as scheme]))
 
-;; Source-only integration spike; does NOT claim the bcb executable contains
-;; this hook. Load the exact edited runtime function into this isolated process.
-(let [source (slurp "/home/chuck/ai-src/worktrees/jolt-protocol-observable-boundary-20261007/host/chez/protocols.ss")]
-  (scheme/eval-string
-    (subs source (.indexOf source "(define (make-protocol-method-site")
-                 (.indexOf source ";; Fixed-arity entry points"))))
+;; Test the selected compiler's actual observable-boundary helper. Do not
+;; silently replace it with a historical worktree's runtime implementation.
+(when-not (scheme/eval-string
+            "(bitwise-bit-set? (procedure-arity-mask make-protocol-method-site) 3)")
+  (throw (ex-info "Byte-writer gate requires observable-boundary runtime" {})))
 
 (defn candidate [x]
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
@@ -147,6 +148,27 @@
       (let [next-out (java.io.StringWriter.)]
         (native/write-terminated-row! values next-out)
         (is (= (str (json/write-str values) "\n") (.toString next-out)))))))
+
+(deftest bounded-private-emission-buffer-and-string-boundaries
+  (doseq [length [0 1 2 65532 65533 65534 65535 65536 65537 131071]
+          token ["a" "\"" "\\" "/" "\n" "é" "😀"]]
+    (let [text (apply str (repeat length token))
+          stock (json/write-str text)]
+      (is (= stock (candidate text)))
+      (is (= (str stock "\n") (native/write-batch-text! [text] (* 16 (inc length)))))))
+  ;; SAT control replay: remove the byte! flush ONLY after reverting unchecked
+  ;; byte/string access. Keep factory definitions lexical to this probe.
+  (let [source (-> (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+                   (string/replace "#3%bytevector-u8-set!" "bytevector-u8-set!")
+                   (string/replace "#3%string-ref" "string-ref")
+                   (string/replace "(when (fx=? used 65536) (flush-buffer!))"
+                                   "(when #f (flush-buffer!))"))
+        factory (scheme/eval-string (str "(let () " source ")"))
+        write (factory) out (java.io.StringWriter.)
+        text (apply str (repeat 65534 "a"))]
+    (is (= 65536 (count (json/write-str text))))
+    (is (thrown? Throwable
+          (write text out json/default-write-options @#'json/native-writer-stock "\n")))))
 
 (deftest qualification-cache-does-not-hide-changed-default-flags
   (let [write (native/load-payload-byte-buffer-writer!)

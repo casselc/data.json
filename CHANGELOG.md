@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Specialize the private byte-emitter store and guarded string-loop reads.
+  Keep 64KiB flush/reset, immutable-string bounds, live protocol checks and
+  nested restoration; bounded access/value checks and checked mutant replay
+  accompany the change. Public/default/AOT selection remains unchanged.
+
 - Decode immutable stock-writer capability slots once per admitted byte-writer
   row rather than for every nested value. Live protocol dispatch remains checked
   per value; nested calls restore the outer slots and idle factories release

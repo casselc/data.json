@@ -63,11 +63,14 @@
         (djn-byte-batch-append! call-batch bytes 0 (bytevector-length bytes)))))
   (define (byte! b)
     (when (fx=? used 65536) (flush-buffer!))
-    (bytevector-u8-set! buf used b)
+    ;; Private 64KiB scratch, used0..65536; flush resets used before a store.
+    ;; Callers emit ASCII literals/digits/escaped characters only. Never apply
+    ;; this unchecked store to arbitrary public byte arrays or callback values.
+    (#3%bytevector-u8-set! buf used b)
     (set! used (fx+ used 1)))
   (define (ascii! s)
     (do ((i 0 (fx+ i 1))) ((fx=? i (string-length s)))
-      (byte! (char->integer (string-ref s i)))))
+      (byte! (char->integer (#3%string-ref s i)))))
   (define (u16! cp)
     (ascii! "\\u")
     (do ((shift 12 (fx- shift 4))) ((fx<? shift 0))
@@ -76,7 +79,7 @@
   (define (raw-string! s)
     (byte! 34)
     (do ((i 0 (fx+ i 1))) ((fx=? i (string-length s)))
-      (let ((cp (char->integer (string-ref s i))))
+      (let ((cp (char->integer (#3%string-ref s i))))
         (case cp
           ((34 92 47) (byte! 92) (byte! cp))
           ((8) (ascii! "\\b")) ((12) (ascii! "\\f"))
