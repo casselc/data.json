@@ -2,7 +2,8 @@
   "Real compiled runtime gate; no runtime source injection."
   (:require [clojure.test :refer [deftest is]]
             [clojure.data.json :as json]
-            [clojure.data.json.jolt-native :as native]))
+            [clojure.data.json.jolt-native :as native]
+            [jolt.scheme :as scheme]))
 
 (defn- stock [rows]
   (apply str (map #(str (json/write-str %) "\n") rows)))
@@ -80,6 +81,25 @@
     (let [rows [[(apply str (repeat length "a")) value] [42]]
           expected (stock rows)]
       (is (= expected (native/write-batch-text! rows Long/MAX_VALUE))))))
+
+(deftest scheme-loop-preserves-overflow-callback-exception-identity
+  (let [write (native/load-payload-byte-buffer-writer!)
+        loop-rows (scheme/proc "djn-byte-batch-write-rows!")
+        batch ((scheme/proc "djn-make-byte-batch"))
+        error (ex-info "expected overflow sentinel" {:type ::native/output-limit})]
+    (binding [json/*experimental-native-writer* write]
+      (is (identical? error
+                      (try (loop-rows [true] write @#'json/native-writer-stock batch 0
+                                      (fn [] (throw error)))
+                           nil (catch Throwable observed observed)))))
+    (is (nil? json/*experimental-native-writer*))))
+
+(deftest terminated-row-adapter-keeps-five-argument-contract
+  (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
+    (let [out (java.io.StringWriter.)]
+      (native/write-terminated-row! ["é/" Long/MIN_VALUE] out)
+      (is (= (str (json/write-str ["é/" Long/MIN_VALUE]) "\n") (.toString out)))))
+  (is (nil? json/*experimental-native-writer*)))
 
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'clojure.data.json-native-batch-loop-test)]
