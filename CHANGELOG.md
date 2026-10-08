@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Keep decoded stock-writer slots in one factory-owned Scheme vector instead
+  of nine mutable closure bindings. Avoid the measured per-row allocation
+  increase while preserving live method checks, nested restoration and clearing.
+
 - Specialize the private byte-emitter store and guarded string-loop reads.
   Keep 64KiB flush/reset, immutable-string bounds, live protocol checks and
   nested restoration; bounded access/value checks and checked mutant replay
