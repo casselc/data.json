@@ -8,6 +8,9 @@
  {:whole-reader-test
   {:extra-paths ["src/test/jolt" "src/test/clojure"]
    :main-opts ["-m" "clojure.data.json-whole-reader-test"]}
+  :jolt-segmented-batch-test
+  {:extra-paths ["src/test/jolt"]
+   :main-opts ["-m" "clojure.data.json-segmented-batch-test"]}
   :jolt-native-integer-codec-test
   {:extra-paths ["src/test/jolt"]
    :main-opts ["-m" "clojure.data.json-native-integer-codec-test"]}

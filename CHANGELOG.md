@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Keep the opt-in byte collector in owned 64KiB segments instead of repeatedly
+  growing/copying a complete backing. Immutable text, row budgets, callback
+  prefixes and custom row replacement remain unchanged. No default/AOT/WAL change.
+
 - Add an explicit source-only serial byte-batch collector. Warm stock values
   avoid per-row strings; observable classifiers and custom writers retain real
   row-local prefixes, mutation, nested calls and partial errors. Check the UTF-8
