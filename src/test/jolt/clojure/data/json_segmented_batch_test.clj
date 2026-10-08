@@ -59,6 +59,26 @@
                               nil (catch Throwable observed observed))))
     (is (nil? json/*experimental-native-writer*))))
 
+(deftest fixed-prefix-survives-custom-row-replacement
+  (doseq [n [0 65535 65536 131071]]
+    (let [prefix (str (apply str (repeat n "p")) "β😀\n")
+          seen (atom []) retained (atom nil)
+          replacement (reify json/JSONWriter
+                        (-write [_ out _]
+                          (swap! seen conj (.toString out))
+                          (reset! retained out)
+                          ((scheme/proc "sb-set!") out "[42")))
+          rows [[0] [1 replacement 2]]
+          payload "[0]\n[42,2]\n"
+          size (alength (.getBytes payload "UTF-8"))]
+      (is (= (str prefix payload) (native/write-prefixed-batch-text! prefix rows size)))
+      (is (= ["[1,"] @seen))
+      (is (= "[42,2]\n" (.toString @retained)))
+      (is (= prefix (native/write-prefixed-batch-text! prefix [] 0)))
+      (is (= ::native/output-limit
+             (:type (ex-data (try (native/write-prefixed-batch-text! prefix rows (dec size))
+                                 nil (catch Throwable error error)))))))))
+
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'clojure.data.json-segmented-batch-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

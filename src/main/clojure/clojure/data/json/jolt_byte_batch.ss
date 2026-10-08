@@ -59,6 +59,10 @@
 
 (define (djn-byte-batch-size batch) (vector-ref batch 3))
 
+(define (djn-byte-batch-prefix! batch text)
+  (let ((bytes (string->utf8 text)))
+    (djn-byte-batch-append! batch bytes 0 (bytevector-length bytes))))
+
 ;; Keep these operations opaque at the Clojure edge, rather than exporting the
 ;; vector representation. Borrowed inputs are copied; no caller bytes retained.
 (jolt-vector djn-make-byte-batch djn-byte-batch-append!

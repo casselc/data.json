@@ -68,6 +68,11 @@ switches may differ from stock options; custom/unknown options use the portable
 writer before emission. No input or encoded field is cached.
 
 For repeated short strings, a separate experimental
+The experimental `native/write-prefixed-batch-text!` materializes a fixed String
+prefix and JSONEachRow payload together. The prefix is outside the row-byte
+budget and is never visible to a custom row writer. This is text encoding only,
+not SQL validation or persistence; the ordinary unprefixed entrypoint remains.
+
 `native/load-payload-string-caching-writer!` returns a writer for **one serial
 payload**. It retains at most 128 stock-encoded string fragments and 65,536
 input-plus-output characters, accepting strings up to 256 characters. Every

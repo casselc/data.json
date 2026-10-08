@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Add explicit prefixed byte-batch text materialization to avoid constructing
+  a full payload String before copying it behind a caller's fixed prefix.
+  Prefix bytes are excluded from the row budget and invisible to row-local
+  custom writers; existing unprefixed/default behavior remains available.
+
 - Keep the opt-in byte collector in owned 64KiB segments instead of repeatedly
   growing/copying a complete backing. Immutable text, row budgets, callback
   prefixes and custom row replacement remain unchanged. No default/AOT/WAL change.
