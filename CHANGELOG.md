@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Decode immutable stock-writer capability slots once per admitted byte-writer
+  row rather than for every nested value. Live protocol dispatch remains checked
+  per value; nested calls restore the outer slots and idle factories release
+  them. This changes neither default selection nor custom writer behavior.
+
 - Add explicit serial prefixed UTF-8 byte output without final whole-payload
   String construction. Return a fresh independent array; keep row-local writer
   views, custom replacement, ordered effects and payload budgets unchanged.

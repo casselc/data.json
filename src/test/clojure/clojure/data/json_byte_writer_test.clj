@@ -132,6 +132,22 @@
       (is (= "[\"before\",[\"recovered\",7],\"after\"]\n" (.toString out)))
       (is (= "[\"fresh\",true]" (json/write-str ["fresh" true]))))))
 
+(deftest byte-writer-capability-slots-restore-across-reentry-and-later-rows
+  ;; Exercise every cached stock slot after a nested writer returns/throws.
+  ;; A factory-wide snapshot or an unrestored inner row must not leak into
+  ;; the remainder of the outer row or the next row on this same factory.
+  (let [write (native/load-payload-byte-buffer-writer!)
+        values [nil true 42 18446744073709551615N 1.25 :named "é/" {"a" 7} [8]]
+        out (java.io.StringWriter.)]
+    (binding [json/*experimental-native-writer* write]
+      (native/write-terminated-row! (into [(NestedValue.) (CatchNestedError.)] values) out)
+      (is (= (str "[[\"nested\",true],[\"recovered\",7],"
+                  (subs (json/write-str values) 1) "\n")
+             (.toString out)))
+      (let [next-out (java.io.StringWriter.)]
+        (native/write-terminated-row! values next-out)
+        (is (= (str (json/write-str values) "\n") (.toString next-out)))))))
+
 (deftest qualification-cache-does-not-hide-changed-default-flags
   (let [write (native/load-payload-byte-buffer-writer!)
         stock @#'json/native-writer-stock
