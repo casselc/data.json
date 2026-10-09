@@ -162,9 +162,16 @@
         batch (make)
         _ (prepend batch prefix)
         prefix-size (size batch)
-        stock @#'clojure.data.json/native-writer-stock]
+        stock @#'clojure.data.json/native-writer-stock
+        ;; The binding thunk must not capture the original lazy sequence head
+        ;; throughout the batch. Hand it off once, inside the writer binding,
+        ;; so lazy row production observes the same context without retaining
+        ;; all previously realized rows through that closure.
+        row-source (volatile! rows)]
     (binding [json/*experimental-native-writer* write]
-      (loop [remaining (seq rows)]
+      (loop [remaining (let [source @row-source]
+                         (vreset! row-source nil)
+                         (seq source))]
         (when (seq remaining)
           (let [out (java.io.StringWriter.)]
             (write (first remaining) out json/default-write-options stock "\n" batch))

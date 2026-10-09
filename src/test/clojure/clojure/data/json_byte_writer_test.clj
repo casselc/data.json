@@ -16,6 +16,35 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest completed-lazy-rows-are-released-without-moving-production-outside-binding
+  (let [weak (scheme/eval-string "(lambda (row) (weak-cons row #f))")
+        alive? (scheme/eval-string "(lambda (pair) (not (bwp-object? (car pair))))")
+        write (native/load-payload-byte-buffer-writer!)
+        watch (atom nil) seen (atom []) contexts (atom []) visits (atom 0)
+        row (fn [i] [(str "row-" i) {"number" i "value" "constant"}])
+        rows (map (fn [i]
+                    (let [value (row i)]
+                      (swap! visits inc)
+                      (when (zero? i) (reset! watch (weak value)))
+                      (when (contains? #{128 256 384} i)
+                        (swap! contexts conj (identical? write json/*experimental-native-writer*))
+                        (System/gc) (System/gc)
+                        (swap! seen conj (alive? @watch)))
+                      value)) (range 512))
+        actual (with-redefs [native/load-payload-byte-buffer-writer! (fn [] write)]
+                 (native/write-prefixed-batch-bytes! "" rows 1048576))
+        expected (str (string/join "\n" (map #(json/write-str (row %)) (range 512))) "\n")]
+    (is (= 512 @visits))
+    (is (= [true true true] @contexts))
+    (doseq [retained? @seen] (is (false? retained?)))
+    (is (= expected (String. actual "UTF-8")))
+    ;; Positive reachability control: a genuinely retained object must remain
+    ;; reachable through the same weak primitive after collection.
+    (let [held (row -1) reference (weak held)]
+      (System/gc) (System/gc)
+      (is (true? (alive? reference)))
+      (is (= "row--1" (first held))))))
+
 (deftest map-visitor-is-shared-within-one-factory-not-between-factories
   (native/load-payload-byte-buffer-writer!)
   (let [[factory visitors]

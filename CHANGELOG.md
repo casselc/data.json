@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Release the serial byte collector's original lazy row head after one source
+  handoff inside the writer binding. Previously encoded rows can be collected
+  while later rows are produced. Preserve one-pass callbacks, exact wire bytes
+  and budget checks; this does not yet establish a throughput/tail improvement.
+
 - Reuse the opt-in byte writer's map-entry visitor within one serial factory,
   preserving per-map comma state and the restorable row/writer context. Exact
   prepared bytes match; a 10k-row screen reduces encoding allocation by about
