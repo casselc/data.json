@@ -16,6 +16,51 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest map-visitor-is-shared-within-one-factory-not-between-factories
+  (native/load-payload-byte-buffer-writer!)
+  (let [[factory visitors]
+        (scheme/eval-string
+          (str "(let ((seen '()) (old pmap-fold-seq-order)) "
+               "(let ((pmap-fold-seq-order (lambda (m visit acc) "
+               "(unless (memq visit seen) (set! seen (cons visit seen))) "
+               "(old m visit acc)))) "
+               (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+               " (jolt-vector djn-make-byte-buffer-writer (lambda () (length seen)))))"))
+        first-write (factory) second-write (factory)
+        row (array-map "first" (array-map "a" 1 "b" 2)
+                       "second" [(array-map "c" 3) (array-map "d" 4)])
+        expected (json/write-str row)
+        render (fn [write]
+                 (let [out (java.io.StringWriter.)]
+                   (write row out json/default-write-options @#'json/native-writer-stock)
+                   (.toString out)))]
+    (is (= expected (render first-write)))
+    (is (= 1 (visitors)))
+    (is (= expected (render first-write)))
+    (is (= 1 (visitors)))
+    (is (= expected (render second-write)))
+    (is (= 2 (visitors)))))
+
+(deftest shared-map-visitor-keeps-nested-failure-and-outer-comma-state-separate
+  (let [prefixes (atom [])
+        callback (reify json/JSONWriter
+                   (-write [_ out _]
+                     (swap! prefixes conj (.toString out))
+                     (try (json/write-str (array-map "bad" Double/NaN))
+                          (catch Throwable _ nil))
+                     (.append out (json/write-str
+                                    (array-map "inner" (array-map "value" 7 "empty" {}))))))
+        row (array-map "before" (array-map "first" 1)
+                       "custom" callback "after" (array-map "last" 3))
+        expected (json/write-str row)
+        expected-prefixes @prefixes
+        write (native/load-payload-byte-buffer-writer!)]
+    (reset! prefixes [])
+    (binding [json/*experimental-native-writer* write]
+      (is (= expected (json/write-str row)))
+      (is (= expected-prefixes @prefixes))
+      (is (= "{\"later\":{\"x\":2}}" (json/write-str {"later" {"x" 2}}))))))
+
 (deftest immutable-option-lookups-are-per-context-not-per-map-entry
   (native/load-payload-byte-buffer-writer!)
   (let [factory (scheme/eval-string

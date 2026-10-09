@@ -144,6 +144,27 @@
     (flush!)
     (let ((result (jolt-invoke3 impl x writer options)))
       (sync!) result))
+  ;; The visitor uses only the restorable factory context and its arguments.
+  ;; Construct it once, not once per map; nested emits retain their own fold
+  ;; accumulator and reentrant rows restore the surrounding writer context.
+  (define (emit-map-entry! k child printed?)
+    (let ((name (if (string? k) k
+                    (begin (flush!)
+                      (let ((name (jolt-invoke1 (vector-ref stock-slots 10) k)))
+                        (sync!) name)))))
+      ;; Unknown equality representations may themselves be observable;
+      ;; preserve the stock sentinel check and its flush boundary.
+      (unless (or (jolt-nil? child) (string? child) (boolean? child)
+                  (number? child) (keyword? child) (symbol-t? child)
+                  (pvec? child) (pmap? child) (procedure? child)) (flush!))
+      (unless (string? name)
+        (flush!)
+        (jolt-throw (host-new "Exception" "JSON object keys must be strings")))
+      (let ((omit? (jolt=2 (vector-ref stock-slots 9) child)))
+        (sync!)
+        (if omit? printed?
+            (begin (when printed? (byte! 44))
+                   (string! name) (byte! 58) (emit! child) #t)))))
   (define (emit! x)
     (let ((root (var-cell-root djn-method-cell)))
       (if (not (eq? root (vector-ref stock-slots 0)))
@@ -169,25 +190,7 @@
                (byte! 93))
               ((and (pmap? x) (eq? impl (vector-ref stock-slots 7)))
                (byte! 123)
-               (pmap-fold-seq-order x
-                 (lambda (k child printed?)
-                   (let ((name (if (string? k) k
-                                   (begin (flush!)
-                                     (let ((name (jolt-invoke1 (vector-ref stock-slots 10) k)))
-                                       (sync!) name)))))
-                     ;; Unknown equality representations may themselves
-                     ;; be observable; preserve the stock sentinel check.
-                     (unless (or (jolt-nil? child) (string? child) (boolean? child)
-                                 (number? child) (keyword? child) (symbol-t? child)
-                                 (pvec? child) (pmap? child) (procedure? child)) (flush!))
-                     (unless (string? name)
-                       (flush!)
-                       (jolt-throw (host-new "Exception" "JSON object keys must be strings")))
-                     (let ((omit? (jolt=2 (vector-ref stock-slots 9) child)))
-                       (sync!)
-                     (if omit? printed?
-                         (begin (when printed? (byte! 44))
-                                (string! name) (byte! 58) (emit! child) #t))))) #f)
+               (pmap-fold-seq-order x emit-map-entry! #f)
                (byte! 125))
               (else (invoke! impl x)))))))
 

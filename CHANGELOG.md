@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Reuse the opt-in byte writer's map-entry visitor within one serial factory,
+  preserving per-map comma state and the restorable row/writer context. Exact
+  prepared bytes match; a 10k-row screen reduces encoding allocation by about
+  2.56 MB. No throughput, default-backend or persistence change is claimed.
+
 - Reuse the opt-in byte writer's row execution and cleanup closures within one
   serial factory. Save their invocation fields for nested calls and clear them
   when idle. A prepared 10k-row screen reduces allocation by about 4.8 MB; it
