@@ -124,6 +124,38 @@
                               nil (catch Throwable observed observed))))
     (is (nil? json/*experimental-native-writer*))))
 
+(deftest reused-byte-factory-restores-nested-and-failed-row-contexts
+  (let [write (native/load-payload-byte-buffer-writer!)
+        capability @#'json/native-writer-stock
+        options json/default-write-options
+        batch ((scheme/proc "djn-make-byte-batch"))
+        retained (atom nil)
+        error (ex-info "nested original" {:expected true})
+        bad (reify json/JSONWriter (-write [_ _ _] (throw error)))
+        nested (reify json/JSONWriter
+                 (-write [_ out _]
+                   (reset! retained out)
+                   (is (= "[1," (.toString out)))
+                   (is (identical? error
+                                   (try (json/write [7 bad] (java.io.StringWriter.))
+                                        nil (catch Throwable seen seen))))
+                   (is (= "[1," (.toString out)))
+                   (let [inner (java.io.StringWriter.)]
+                     (json/write ["inner" 7] inner)
+                     (is (= "[\"inner\",7]" (.toString inner)))
+                     (.append out (.toString inner)))))]
+    (binding [json/*experimental-native-writer* write]
+      (write [1 nested 3] (java.io.StringWriter.) options capability "\n" batch)
+      (is (= "[1,[\"inner\",7],3]\n" (.toString @retained)))
+      (write [4] (java.io.StringWriter.) options capability "\n" batch)
+      (is (= "[1,[\"inner\",7],3]\n[4]\n"
+             ((scheme/proc "djn-byte-batch-text") batch 0)))
+      (is (identical? error (try (json/write [1 bad] (java.io.StringWriter.))
+                                 nil (catch Throwable seen seen))))
+      (let [after (java.io.StringWriter.)]
+        (json/write [9 "after"] after)
+        (is (= "[9,\"after\"]" (.toString after)))))))
+
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'clojure.data.json-segmented-batch-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

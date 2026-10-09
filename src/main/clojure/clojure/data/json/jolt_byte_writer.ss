@@ -15,7 +15,8 @@
         ;; cached Var roots or decisions about any receiver value.
         (stock-slots (make-vector 11 #f))
         (used 0) (flush-epoch 0)
-        (batch #f) (row-start 0) (exposed? #f) (ever-exposed? #f))
+        (batch #f) (row-start 0) (exposed? #f) (ever-exposed? #f)
+        (row-value #f) (row-ending "") (row-previous #f) (row-loan #f))
     ;; Stock is immutable, but protocol implementations are NOT. Decode the
     ;; row's capability once while retaining live root/site checks per value.
     ;; Reentry restores the outer capability; idle factories retain none.
@@ -190,6 +191,44 @@
                (byte! 125))
               (else (invoke! impl x)))))))
 
+    ;; One set of dynamic-wind closures per serial factory, not per row.
+    ;; Reentrant writes save and restore these invocation fields with the
+    ;; existing writer/scratch context. Idle factories retain no input row.
+    (define (run-row!) (emit! row-value) (ascii! row-ending))
+    (define (flush-row!)
+      (sync!) (flush-buffer!)
+      (when (and batch ever-exposed?)
+        (sb-set! writer (djn-byte-batch-text batch row-start))))
+    (define (restore-row!)
+      (let ((previous row-previous) (loan row-loan))
+        (if previous
+            (begin
+              (set! writer (vector-ref previous 0))
+              (set! options (vector-ref previous 1))
+              (set-stock! (vector-ref previous 2))
+              (set! buf (vector-ref previous 3))
+              (set! used (vector-ref previous 4))
+              (set! flush-epoch (vector-ref previous 5))
+              (set! scratch (vector-ref previous 6))
+              (set! batch (vector-ref previous 7))
+              (set! row-start (vector-ref previous 8))
+              (set! exposed? (vector-ref previous 9))
+              (set! ever-exposed? (vector-ref previous 10))
+              (set! row-value (vector-ref previous 11))
+              (set! row-ending (vector-ref previous 12))
+              (set! row-previous (vector-ref previous 13))
+              (set! row-loan (vector-ref previous 14)))
+            (begin
+              (set! writer #f) (set! options #f) (set-stock! #f)
+              (set! buf #f) (set! scratch #f)
+              (set! batch #f) (set! row-start 0) (set! exposed? #f)
+              (set! ever-exposed? #f) (set! used 0) (set! flush-epoch 0)
+              (set! row-value #f) (set! row-ending "")
+              (set! row-previous #f) (set! row-loan #f)))
+        (unless spare (set! spare loan))))
+    (define (finish-row!)
+      (dynamic-wind jolt-finally-in flush-row! restore-row!))
+
     (lambda (value call-writer call-options call-stock . endings)
       (unless (or (null? endings)
                   (and (equal? (car endings) "\n")
@@ -224,7 +263,8 @@
                   jolt-nil)
             (let ((previous (and writer
                                  (vector writer options stock buf used flush-epoch scratch
-                                         batch row-start exposed? ever-exposed?)))
+                                         batch row-start exposed? ever-exposed?
+                                         row-value row-ending row-previous row-loan)))
                   (loan (or spare
                             (vector (make-bytevector 65536) (make-bytevector 21)))))
               (set! spare #f)
@@ -234,39 +274,8 @@
               (set! batch call-batch)
               (set! row-start (if batch (djn-byte-batch-size batch) 0))
               (set! exposed? #f) (set! ever-exposed? #f)
-              (dynamic-wind jolt-finally-in
-                (lambda () (emit! value) (ascii! ending))
-                (lambda ()
-                  (dynamic-wind jolt-finally-in
-                    (lambda ()
-                      (sync!) (flush-buffer!)
-                      ;; An observer may retain the actual writer after return.
-                      ;; Publish the completed local row, including its
-                      ;; terminator just like the caller's old row adapter.
-                      (when (and batch ever-exposed?)
-                        (sb-set! writer (djn-byte-batch-text batch row-start))))
-                    (lambda ()
-                      (if previous
-                          (begin
-                            (set! writer (vector-ref previous 0))
-                            (set! options (vector-ref previous 1))
-                            (set-stock! (vector-ref previous 2))
-                            (set! buf (vector-ref previous 3))
-                            (set! used (vector-ref previous 4))
-                            (set! flush-epoch (vector-ref previous 5))
-                            (set! scratch (vector-ref previous 6))
-                            (set! batch (vector-ref previous 7))
-                            (set! row-start (vector-ref previous 8))
-                            (set! exposed? (vector-ref previous 9))
-                            (set! ever-exposed? (vector-ref previous 10)))
-                          (begin
-                            ;; Idle factories never retain a writer, row or
-                            ;; operation-specific stock/options capability.
-                            (set! writer #f) (set! options #f) (set-stock! #f)
-                            (set! buf #f) (set! scratch #f)
-                            (set! batch #f) (set! row-start 0) (set! exposed? #f)
-                            (set! ever-exposed? #f)
-                            (set! used 0) (set! flush-epoch 0)))
-                      (unless spare (set! spare loan))))))
+              (set! row-value value) (set! row-ending ending)
+              (set! row-previous previous) (set! row-loan loan)
+              (dynamic-wind jolt-finally-in run-row! finish-row!)
               jolt-nil)))))))
 djn-make-byte-buffer-writer

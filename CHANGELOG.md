@@ -2,6 +2,12 @@
 
 ## Unreleased — experimental, fork-only
 
+- Reuse the opt-in byte writer's row execution and cleanup closures within one
+  serial factory. Save their invocation fields for nested calls and clear them
+  when idle. A prepared 10k-row screen reduces allocation by about 4.8 MB; it
+  does not establish a throughput improvement. Keep live dispatch, real writer
+  visibility, exception cleanup, default selection and persistence unchanged.
+
 - Capture immutable key/value option functions once per byte-writer context,
   not once per map entry, and block-copy decimal integer scratch ranges.
   Preserve live protocol dispatch, nested option restoration and 64KiB
