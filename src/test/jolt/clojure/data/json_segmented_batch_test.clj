@@ -156,6 +156,46 @@
         (json/write [9 "after"] after)
         (is (= "[9,\"after\"]" (.toString after)))))))
 
+(deftest three-level-byte-factory-restores-large-buffer-and-integer-scratch
+  (let [write (native/load-payload-byte-buffer-writer!)
+        capability @#'json/native-writer-stock
+        options json/default-write-options
+        batch ((scheme/proc "djn-make-byte-batch"))
+        outer-text (apply str (repeat 65536 "o"))
+        child-text (apply str (repeat 65536 "c"))
+        grand-text (apply str (repeat 65536 "g"))
+        low -9223372036854775808
+        high 18446744073709551615N
+        grand-value ["grand" low high grand-text]
+        child-value ["child" child-text grand-value high]
+        outer-value [low outer-text child-value 42]
+        expected-grand (json/write-str grand-value)
+        expected-child (json/write-str child-value)
+        expected-outer (str (json/write-str outer-value) "\n")
+        grand-writer (atom nil)
+        child-writer (atom nil)
+        outer-writer (java.io.StringWriter.)
+        leaf (reify json/JSONWriter
+               (-write [_ out _]
+                 (let [inner (java.io.StringWriter.)]
+                   (reset! grand-writer inner)
+                   (json/write grand-value inner)
+                   (.append out (.toString inner)))))
+        middle (reify json/JSONWriter
+                 (-write [_ out _]
+                   (let [inner (java.io.StringWriter.)]
+                     (reset! child-writer inner)
+                     (json/write ["child" child-text leaf high] inner)
+                     (.append out (.toString inner)))))]
+    (binding [json/*experimental-native-writer* write]
+      (write [low outer-text middle 42] outer-writer options capability "\n" batch)
+      (write [9] (java.io.StringWriter.) options capability "\n" batch))
+    (is (= expected-grand (.toString @grand-writer)))
+    (is (= expected-child (.toString @child-writer)))
+    (is (= expected-outer (.toString outer-writer)))
+    (is (= (str expected-outer "[9]\n")
+           ((scheme/proc "djn-byte-batch-text") batch 0)))))
+
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'clojure.data.json-segmented-batch-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

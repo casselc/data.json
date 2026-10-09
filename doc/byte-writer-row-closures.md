@@ -28,10 +28,25 @@ per batch, candidate 18.359/18.359 MB, about 4.8 MB (21%) less. Parent p50
 80.414/79.610 ms, candidate 79.456/80.015 ms. No meaningful timing win or
 tail claim. This is encoding-only, not confirmed Durable or S3 throughput.
 
-Actual candidate source passed 49 tests and 954 assertions across the native,
+Actual candidate source passed 50 tests and 958 assertions across the native,
 segmented, payload-cache and integer-codec namespaces. A new regression checks
 the same factory through nested failure, subsequent nested success, outer
 newline/retained-writer publication, and reuse after an outer failure.
+Another regression holds three active row invocations, each crossing 64KiB
+boundaries, with wide signed/unsigned integers and independent scratch loans.
+
+The full local single-caller window ran 300 batches of 10,000 rows, three
+warmups, 303 actual stream calls, two checkpoints and 107 renewals. A fresh
+unchanged stock process recovered all 3,030,000 full physical rows with exact
+typed values/status/timestamps. Source/artifact parity passed. Confirmed wall
+throughput was 27,339 rows/s; p50/p90/p95/p99/max were
+356.441/415.940/451.174/584.596/651.168 ms. Inverse-p50 was 28,055 and
+inverse-p99 17,106 rows/s: the 20k inverse-p99 target was not met.
+
+Full-window allocation was 80.745 MB/batch versus preceding parent-stack
+windows around 85.54 MB: the prepared allocation saving survived the real
+path. Sequential windows cannot establish a causal timing gain or regression.
+Caller CPU dominated several slow samples; others also had long GC pauses.
 
 The allocation diagnostic used a smaller 1,000-row fixture and asserted no GC
 during sampling, then restored the original collection trip setting. Empty
@@ -42,6 +57,6 @@ led to closure reuse, not a change to scalar or equality semantics. Earlier
 fine-grained statistics/live-heap measurements crossing GC produced impossible
 negative deltas and were rejected.
 
-Remaining gates: independent Claude review, full real Durable window and fresh
-unchanged-reader recovery, then ecosystem pin/hosted-S3 qualification. No
+Remaining gates: independent Claude review, stable full-pipeline tail headroom,
+then ecosystem pin/hosted-S3 qualification. No
 Lemonade server was accessed.
