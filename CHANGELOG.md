@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Skip fragment-cache hashing and admission for strings shorter than 16
+  characters in the opt-in byte writer. Preserve exact escaping, live writer
+  checks, copied cache keys, bounded storage and observable callbacks. Defaults
+  and persistence contracts are unchanged.
+
 - Keep decoded stock-writer slots in one factory-owned Scheme vector instead
   of nine mutable closure bindings. Avoid the measured per-row allocation
   increase while preserving live method checks, nested restoration and clearing.

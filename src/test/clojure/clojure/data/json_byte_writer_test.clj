@@ -16,6 +16,14 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest string-cache-length-boundaries-preserve-wire
+  (doseq [n [0 1 15 16 17 255 256 257]
+          character ["a" "\"" "\\" "/" "\n" "é" "😀"]]
+    (let [s (apply str (repeat n character))
+          value [s s {s s} [s]]]
+      (is (= (json/write-str value) (candidate value))
+          (str "length=" n " character=" character)))))
+
 (deftest stock-wire-and-option-delegation
   (doseq [x [nil true false "é😀/\n" 0 -1 Long/MIN_VALUE Long/MAX_VALUE
              18446744073709551615N 999999999999999999999999999999999999N

@@ -102,11 +102,14 @@
   (define (string! s)
     ;; Consult ONLY after the live stock String implementation matched.
     ;; Default escaping is fixed; never cache callbacks/custom methods.
-    (let ((hit (hashtable-ref strings s #f)))
+    ;; Short strings are cheaper to emit than to content-hash on every value.
+    ;; This only changes memoization eligibility: dispatch and escaping stay
+    ;; live, and admitted keys are still copied to protect against mutation.
+    (let ((hit (and (>= (string-length s) 16) (hashtable-ref strings s #f))))
       (if hit (append-bytes! hit)
           (let ((start used) (epoch flush-epoch))
             (raw-string! s)
-            (when (and (<= (string-length s) 256)
+            (when (and (>= (string-length s) 16) (<= (string-length s) 256)
                        (= epoch flush-epoch) (< (hashtable-size strings) 128)
                        (<= (+ cached-bytes (- used start) (* 4 (string-length s))) 65536))
               (let ((bytes (make-bytevector (- used start))))
