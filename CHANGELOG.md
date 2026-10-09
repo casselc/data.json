@@ -2,6 +2,12 @@
 
 ## Unreleased — experimental, fork-only
 
+- Capture immutable key/value option functions once per byte-writer context,
+  not once per map entry, and block-copy decimal integer scratch ranges.
+  Preserve live protocol dispatch, nested option restoration and 64KiB
+  boundaries. Component measurements show only a modest median improvement;
+  default selection and public contracts are unchanged.
+
 - Keep decoded stock-writer slots in one factory-owned Scheme vector instead
   of nine mutable closure bindings. Avoid the measured per-row allocation
   increase while preserving live method checks, nested restoration and clearing.

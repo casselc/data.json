@@ -10,8 +10,10 @@
         (qualified-defaults #f)
         (writer #f) (options #f) (stock #f) (buf #f) (scratch #f)
         ;; One factory-owned box avoids the measured allocation increase from
-        ;; nine mutable bindings; nested calls repopulate on restoration.
-        (stock-slots (make-vector 9 #f))
+        ;; mutable bindings; nested calls repopulate on restoration. The last
+        ;; two slots hold functions from this row's immutable option map, not
+        ;; cached Var roots or decisions about any receiver value.
+        (stock-slots (make-vector 11 #f))
         (used 0) (flush-epoch 0)
         (batch #f) (row-start 0) (exposed? #f) (ever-exposed? #f))
     ;; Stock is immutable, but protocol implementations are NOT. Decode the
@@ -27,7 +29,11 @@
       (vector-set! stock-slots 5 (and value (pvec-nth! value 5)))
       (vector-set! stock-slots 6 (and value (pvec-nth! value 6)))
       (vector-set! stock-slots 7 (and value (pvec-nth! value 7)))
-      (vector-set! stock-slots 8 (and value (pvec-nth! value 8))))
+      (vector-set! stock-slots 8 (and value (pvec-nth! value 8)))
+      (vector-set! stock-slots 9
+                   (and value (pmap-fast-get (pvec-nth! value 9) djn-value-fn pmap-absent)))
+      (vector-set! stock-slots 10
+                   (and value (pmap-fast-get (pvec-nth! value 9) djn-key-fn pmap-absent))))
     (define site
       (make-protocol-method-site "clojure.data.json/JSONWriter" "-write"
         (lambda () (when writer (flush!)))))
@@ -92,13 +98,16 @@
                          (u16! (fx+ #xdc00 (fxand n #x3ff))))))
                   (else (byte! cp)))))))
     (byte! 34))
-  (define (append-bytes! bytes)
-    (let loop ((offset 0))
-      (unless (= offset (bytevector-length bytes))
-        (when (= used 65536) (flush-buffer!))
-        (let ((n (min (- (bytevector-length bytes) offset) (- 65536 used))))
+  (define (append-range! bytes start end)
+    ;; Private buffer/scratch ranges only; bytevector-copy! retains bounds checks.
+    (let loop ((offset start))
+      (unless (fx=? offset end)
+        (when (fx=? used 65536) (flush-buffer!))
+        (let ((n (fxmin (fx- end offset) (fx- 65536 used))))
           (bytevector-copy! bytes offset buf used n)
-          (set! used (+ used n)) (loop (+ offset n))))))
+          (set! used (fx+ used n)) (loop (fx+ offset n))))))
+  (define (append-bytes! bytes)
+    (append-range! bytes 0 (bytevector-length bytes)))
   (define (string! s)
     ;; Consult ONLY after the live stock String implementation matched.
     ;; Default escaping is fixed; never cache callbacks/custom methods.
@@ -128,8 +137,7 @@
               (if (= q 0)
                   (let ((start (if negative? (fx- i 1) i)))
                     (when negative? (bytevector-u8-set! scratch start 45))
-                    (do ((j start (fx+ j 1))) ((fx=? j 21))
-                      (byte! (bytevector-u8-ref scratch j))))
+                    (append-range! scratch start 21))
                   (digits q (fx- i 1))))))))
   (define (invoke! impl x)
     (flush!)
@@ -164,7 +172,7 @@
                  (lambda (k child printed?)
                    (let ((name (if (string? k) k
                                    (begin (flush!)
-                                     (let ((name (jolt-invoke1 (pmap-fast-get options djn-key-fn pmap-absent) k)))
+                                     (let ((name (jolt-invoke1 (vector-ref stock-slots 10) k)))
                                        (sync!) name)))))
                      ;; Unknown equality representations may themselves
                      ;; be observable; preserve the stock sentinel check.
@@ -174,7 +182,7 @@
                      (unless (string? name)
                        (flush!)
                        (jolt-throw (host-new "Exception" "JSON object keys must be strings")))
-                     (let ((omit? (jolt=2 (pmap-fast-get options djn-value-fn pmap-absent) child)))
+                     (let ((omit? (jolt=2 (vector-ref stock-slots 9) child)))
                        (sync!)
                      (if omit? printed?
                          (begin (when printed? (byte! 44))

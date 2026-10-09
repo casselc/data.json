@@ -16,6 +16,42 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest immutable-option-lookups-are-per-context-not-per-map-entry
+  (native/load-payload-byte-buffer-writer!)
+  (let [factory (scheme/eval-string
+                 (str "(let ((lookups 0) (old pmap-fast-get)) "
+                      "(let ((pmap-fast-get (lambda (m k absent) "
+                      "(when (or (eq? k djn-key-fn) (eq? k djn-value-fn)) "
+                      "(set! lookups (+ lookups 1))) (old m k absent)))) "
+                      (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+                      " (jolt-vector djn-make-byte-buffer-writer (lambda () lookups))))"))
+        write ((nth factory 0)) counts (nth factory 1)
+        row (into {} (map (fn [i] [(str "key-" i) i]) (range 32)))
+        out (java.io.StringWriter.)]
+    (write row out json/default-write-options @#'json/native-writer-stock)
+    (is (= (json/write-str row) (.toString out)))
+    (is (= 2 (counts)))))
+
+(deftest option-slots-restore-after-nested-changed-defaults
+  (let [original json/default-write-options
+        changed (assoc original :key-fn (fn [k] (str "inner-" (name k)))
+                                :value-fn (fn [_ _] nil))
+        callback (reify json/JSONWriter
+                   (-write [_ out _]
+                     (alter-var-root #'json/default-write-options (constantly changed))
+                     (.append out (json/write-str {:x 2}))))
+        value (array-map :before 1 :custom callback :after 3
+                         :omitted (:value-fn original))
+        write (native/load-payload-byte-buffer-writer!)]
+    (with-redefs [json/default-write-options original]
+      (let [out (java.io.StringWriter.)]
+        (write value out original @#'json/native-writer-stock)
+        (is (= "{\"before\":1,\"custom\":{\"inner-x\":null},\"after\":3}" (.toString out)))))
+    (is (identical? original json/default-write-options))
+    (let [out (java.io.StringWriter.)]
+      (write {:later 7} out original @#'json/native-writer-stock)
+      (is (= "{\"later\":7}" (.toString out))))))
+
 (deftest stock-wire-and-option-delegation
   (doseq [x [nil true false "é😀/\n" 0 -1 Long/MIN_VALUE Long/MAX_VALUE
              18446744073709551615N 999999999999999999999999999999999999N
@@ -191,6 +227,14 @@
     (doseq [tail ["" "/" "\"" "\\" "é😀\n"]]
       (let [value [(str (apply str (repeat n "a")) tail)]]
         (is (= (json/write-str value) (candidate value)))))))
+
+(deftest integer-scratch-range-crosses-emission-buffer-boundaries
+  (doseq [n [65529 65530 65531 65532 65533 65534 65535 65536]
+          value [0 -1 Long/MIN_VALUE Long/MAX_VALUE 18446744073709551615N]]
+    (let [row [(apply str (repeat n "a")) value false]
+          expected (json/write-str row)]
+      (is (= expected (candidate row)))
+      (is (= (str expected "\n") (native/write-batch-text! [row] 1000000))))))
 
 (deftest batch-stock-wire-and-buffer-growth
   (doseq [rows [[] [nil true false 1 -1 1.25 "é😀/"]
