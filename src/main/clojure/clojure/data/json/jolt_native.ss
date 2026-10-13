@@ -6,6 +6,28 @@
 ;; The caller supplies a real StringWriter. Both native output and custom
 ;; writers mutate that same sink, so fallback never restarts or repeats effects.
 
+;; Newer StringWriter shares a synchronized StringBuffer store. Select guarded
+;; runtime-owned seams once; older qualified runtimes retain their original
+;; representation. This does not cache protocol roots or callback results.
+(define djn-locked-writer-runtime?
+  (and (top-level-bound? 'sb-append*!)
+       (top-level-bound? 'sb-str*)
+       (top-level-bound? 'sb-length*)))
+(define djn-sb-append!
+  (if djn-locked-writer-runtime? (top-level-value 'sb-append*!) sb-append!))
+(define djn-sb-str
+  (if djn-locked-writer-runtime? (top-level-value 'sb-str*) sb-str))
+(define (djn-sb-install-or-append! writer text)
+  ;; Keep the empty-sink decision and mutation under one monitor: a concurrent
+  ;; getBuffer append must not be lost between the check and replacement.
+  (define (install!)
+    (if (= (sb-length writer) 0)
+        (sb-set! writer text)
+        (sb-append! writer text)))
+  (if djn-locked-writer-runtime?
+      (jolt-call-with-monitor (vector-ref (jhost-state writer) 4) install!)
+      (install!)))
+
 (define djn-method-cell (jolt-var "clojure.data.json" "-write"))
 (define djn-json-writer-site
   (make-protocol-method-site "clojure.data.json/JSONWriter" "-write"))
@@ -98,10 +120,10 @@
       (let ((first (next-escape 0)))
         (if (fx=? first size)
             (begin
-              (sb-append! writer "\"")
-              (sb-append! writer value)
-              (sb-append! writer "\""))
-            (sb-append! writer
+              (djn-sb-append! writer "\"")
+              (djn-sb-append! writer value)
+              (djn-sb-append! writer "\""))
+            (djn-sb-append! writer
               (djn-with-string-output flags
                 (lambda (out)
                   (put-char out #\")
@@ -173,20 +195,20 @@
                  (eq? (vector-ref entry 0) (vector-ref flags 0))
                  (eq? (vector-ref entry 1) (vector-ref flags 1))
                  (eq? (vector-ref entry 2) (vector-ref flags 2)))
-            (sb-append! writer (vector-ref entry 3))
+            (djn-sb-append! writer (vector-ref entry 3))
             (if (and (fx<=? (string-length name) 128)
                      (fx<? (hashtable-size table) 128)
                      (fx<? (vector-ref cache 1) 8192))
                 (let ((sink (host-new "StringWriter")))
                   (djn-string name sink flags)
-                  (let* ((encoded (sb-str sink))
+                  (let* ((encoded (djn-sb-str sink))
                          (size (fx+ (string-length name) (string-length encoded))))
                     (when (fx<=? (fx+ size (vector-ref cache 1)) 8192)
                       (hashtable-set! table name
                         (vector (vector-ref flags 0) (vector-ref flags 1)
                                 (vector-ref flags 2) encoded))
                       (vector-set! cache 1 (fx+ size (vector-ref cache 1))))
-                    (sb-append! writer encoded)))
+                    (djn-sb-append! writer encoded)))
                 (djn-string name writer flags))))))
 
 (define (djn-value-string value writer flags cache)
@@ -201,13 +223,13 @@
                  (eq? (vector-ref entry 0) (vector-ref flags 0))
                  (eq? (vector-ref entry 1) (vector-ref flags 1))
                  (eq? (vector-ref entry 2) (vector-ref flags 2)))
-            (sb-append! writer (vector-ref entry 3))
+            (djn-sb-append! writer (vector-ref entry 3))
             (if (and (fx<=? (string-length value) 256)
                      (fx<? (hashtable-size table) 128)
                      (fx<? (vector-ref cache 1) 65536))
                 (let ((sink (host-new "StringWriter")))
                   (djn-string value sink flags)
-                  (let* ((encoded (sb-str sink))
+                  (let* ((encoded (djn-sb-str sink))
                          (size (fx+ (string-length value) (string-length encoded))))
                     (when (fx<=? (fx+ size (vector-ref cache 1)) 65536)
                       ;; Do not retain a mutable Scheme string as a table key.
@@ -215,7 +237,7 @@
                         (vector (vector-ref flags 0) (vector-ref flags 1)
                                 (vector-ref flags 2) encoded))
                       (vector-set! cache 1 (fx+ size (vector-ref cache 1))))
-                    (sb-append! writer encoded)))
+                    (djn-sb-append! writer encoded)))
                 (djn-string value writer flags))))))
 
 (define djn-indent (keyword #f "indent"))
@@ -233,7 +255,7 @@
        (eq? (var-cell-root djn-method-cell) (pvec-nth! stock 0))
        (let ((impl (djn-json-writer-site value)))
          (if (eq? impl (pvec-nth! stock 8))
-             (sb-append! writer "[]")
+             (djn-sb-append! writer "[]")
              (jolt-invoke3 impl value writer options))
          #t)))
 
@@ -282,21 +304,21 @@
                              (djn-value-string x writer flags value-cache)
                              (djn-string x writer flags)))
                         ((and (jolt-nil? x) (eq? impl null-writer))
-                         (sb-append! writer "null"))
+                         (djn-sb-append! writer "null"))
                         ((and (boolean? x) (eq? impl plain-writer))
-                         (sb-append! writer (if x "true" "false")))
+                         (djn-sb-append! writer (if x "true" "false")))
                         ((and (integer? x) (exact? x)
                               (or (eq? impl plain-writer) (eq? impl bignum-writer)))
-                         (sb-append! writer (djn-integer-string x)))
+                         (djn-sb-append! writer (djn-integer-string x)))
                         ((and (flonum? x) (finite? x) (eq? impl double-writer))
-                         (sb-append! writer (jolt-flonum->string x)))
+                         (djn-sb-append! writer (jolt-flonum->string x)))
                         ((and (or (keyword? x) (symbol-t? x))
                               (eq? impl named-writer))
                          (djn-string
                            (if (keyword? x) (keyword-t-name x) (symbol-t-name x))
                            writer flags))
                         ((and (pmap? x) (eq? impl map-writer))
-                         (sb-append! writer "{")
+                         (djn-sb-append! writer "{")
                          (pmap-fold-seq-order x
                            (lambda (key child printed?)
                              ;; The stock key function also handles numbers,
@@ -310,19 +332,19 @@
                                ;; sentinel if that very function is the value.
                                (if (jolt=2 value-fn child) printed?
                                    (begin
-                                     (when printed? (sb-append! writer ","))
+                                     (when printed? (djn-sb-append! writer ","))
                                      (djn-key-string name writer flags key-cache)
-                                     (sb-append! writer ":")
+                                     (djn-sb-append! writer ":")
                                      (emit child)
                                      #t)))) #f)
-                         (sb-append! writer "}"))
+                         (djn-sb-append! writer "}"))
                         ((and (pvec? x) (eq? impl array-writer))
-                         (sb-append! writer "[")
+                         (djn-sb-append! writer "[")
                          (let ((n (pvec-count x)))
                            (do ((i 0 (fx+ i 1))) ((fx=? i n))
-                             (unless (fx=? i 0) (sb-append! writer ","))
+                             (unless (fx=? i 0) (djn-sb-append! writer ","))
                              (emit (pvec-nth! x i))))
-                         (sb-append! writer "]"))
+                         (djn-sb-append! writer "]"))
                         ;; Lazy seqs deliberately stay entirely portable:
                         ;; stock write-array realizes next before writing first.
                         ;; Dates, ratios, decimals, sets, records, etc. also keep

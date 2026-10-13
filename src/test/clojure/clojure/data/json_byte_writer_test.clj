@@ -16,6 +16,40 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest writer-helper-access-respects-new-runtime-monitor
+  (native/load-payload-byte-buffer-writer!)
+  (let [locking? (scheme/eval-string "djn-locked-writer-runtime?")]
+    (is (boolean? locking?))
+    (when locking?
+      (let [probe
+            (scheme/eval-string
+              (str "(lambda (thunk) "
+                   "(let ((append sb-append!) (read sb-str) (len sb-length)) "
+                   "(define (check!) (when (= (jolt-locks-held) 0) "
+                   "(error 'writer-monitor \"unguarded writer access\"))) "
+                   "(dynamic-wind "
+                   "(lambda () "
+                   "(set! sb-append! (lambda (w s) (check!) (append w s))) "
+                   "(set! sb-str (lambda (w) (check!) (read w))) "
+                   "(set! sb-length (lambda (w) (check!) (len w)))) "
+                   "(lambda () (jolt-invoke0 thunk)) "
+                   "(lambda () (set! sb-append! append) (set! sb-str read) "
+                   "(set! sb-length len)))))"))]
+        ;; A callback forces publication to the real writer and subsequent
+        ;; guarded sync/read, rather than testing only the byte-only fast path.
+        (is (= "{\"value\":\"hello\"}"
+               (probe #(binding [json/*experimental-native-writer*
+                                 (native/load-payload-byte-buffer-writer!)]
+                         (json/write-str {"value" "hello"} :key-fn identity)))))
+        ;; Non-vacuity: this exact raw access works without instrumentation,
+        ;; but must be rejected while the monitor probe is installed.
+        (is (= "" (scheme/eval-string "(sb-str (host-new \"StringWriter\"))")))
+        (is (= :rejected
+               (try
+                 (probe #(scheme/eval-string "(sb-str (host-new \"StringWriter\"))"))
+                 :allowed
+                 (catch Throwable _ :rejected))))))))
+
 (deftest completed-lazy-rows-are-released-without-moving-production-outside-binding
   (let [weak (scheme/eval-string "(lambda (row) (weak-cons row #f))")
         alive? (scheme/eval-string "(lambda (pair) (not (bwp-object? (car pair))))")

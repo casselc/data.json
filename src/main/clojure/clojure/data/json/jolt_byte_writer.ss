@@ -48,9 +48,7 @@
           ;; Existing runtime-owned setter: install a complete first
           ;; chunk as the materialized base, avoiding a second copy on
           ;; the caller's subsequent toString. Nonempty sinks append.
-          (if (= (sb-length writer) 0)
-              (sb-set! writer text)
-              (sb-append! writer text)))))
+          (djn-sb-install-or-append! writer text))))
       (set! used 0))
     (set! flush-epoch (+ flush-epoch 1)))
   (define (flush!)
@@ -62,11 +60,11 @@
   (define (sync!)
     (when (and batch exposed?)
       ;; User code may modify or clear the real StringWriter, not just append.
-      (djn-byte-batch-replace-row! batch row-start (sb-str writer))
+      (djn-byte-batch-replace-row! batch row-start (djn-sb-str writer))
       (set! exposed? #f)))
   (define (append-fallback! target call-batch)
     (when call-batch
-      (let ((bytes (string->utf8 (sb-str target))))
+      (let ((bytes (string->utf8 (djn-sb-str target))))
         (djn-byte-batch-append! call-batch bytes 0 (bytevector-length bytes)))))
   (define (byte! b)
     (when (fx=? used 65536) (flush-buffer!))
@@ -255,13 +253,13 @@
                                         djn-escape-keys)
                                (begin (set! qualified-defaults call-options) #t)))))
             (begin (djn-write! value call-writer call-options call-stock)
-                   (unless (string=? ending "") (sb-append! call-writer ending))
+                   (unless (string=? ending "") (djn-sb-append! call-writer ending))
                    (append-fallback! call-writer call-batch))
             (if (djn-empty-default-vector! value call-writer call-options call-stock)
                 (begin
                   ;; Preserve the earlier native empty-vector win, including
                   ;; live custom vector dispatch, before allocating row state.
-                  (unless (string=? ending "") (sb-append! call-writer ending))
+                  (unless (string=? ending "") (djn-sb-append! call-writer ending))
                   (append-fallback! call-writer call-batch)
                   jolt-nil)
             (let ((previous (and writer

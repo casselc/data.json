@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Use guarded StringWriter operations when Jolt's writer shares a synchronized
+  StringBuffer. Keep the empty-sink install/append decision under one monitor;
+  older runtime representation remains supported. Native writer factories still
+  require serial use, rather than becoming concurrently shareable.
+
 - Release the serial byte collector's original lazy row head after one source
   handoff inside the writer binding. Previously encoded rows can be collected
   while later rows are produced. Preserve one-pass callbacks, exact wire bytes
