@@ -95,6 +95,30 @@
   (load-writer!)
   ((scheme/proc "djn-make-key-cache-writer")))
 
+(defmacro ^:private string-writer-source []
+  (if-let [url (io/resource "clojure/data/json/jolt_string_writer.ss")]
+    (slurp url)
+    (throw (ex-info "Missing native string-output resource" {}))))
+
+(def ^:private string-output-source (string-writer-source))
+(def ^:private string-output-writer
+  (delay
+    (load-writer!)
+    (let [factory (scheme/eval-string string-output-source)]
+      (factory @#'json/native-write-str-original #'json/write-str
+               #'json/*experimental-native-writer* #'json/default-write-options
+               @#'json/native-writer-stock))))
+
+(defn write-str
+  "Explicit source-only JSON string output with the ordinary default options.
+  A stock empty builtin vector can avoid a temporary StringWriter; live method
+  resolution still runs once. Other inputs, changed public writers/options or
+  a bound native-writer hook retain the current public write-str path. Custom
+  vector methods receive a fresh real writer. No output or dispatch cache;
+  does not install a backend or qualify standalone/AOT use."
+  [value]
+  (@string-output-writer value))
+
 (defn load-payload-string-caching-writer!
   "Return a source-only experimental writer for one caller-owned serial payload.
   In addition to the existing key cache, this explicitly retains stock-encoded

@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Add explicit native string output for default-option calls. Stock empty
+  vectors avoid temporary writer allocation, while live replacements, options,
+  native-writer hooks and custom collection methods retain their behavior.
+  Default JSON APIs and backend selection remain unchanged.
+
 - Use guarded StringWriter operations when Jolt's writer shares a synchronized
   StringBuffer. Keep the empty-sink install/append decision under one monitor;
   older runtime representation remains supported. Native writer factories still

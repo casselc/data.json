@@ -2,6 +2,7 @@
   "Focused source-only Jolt backend contract. Run in a fresh process."
   (:require [clojure.data.json :as json]
             [clojure.data.json.jolt-native :as native]
+            [clojure.data.json-native-string-output-test]
             [jolt.fibers :as fibers]
             [jolt.scheme :as scheme]
             [clojure.test :refer [deftest is run-tests testing]])
@@ -720,5 +721,6 @@
     (is (= [0 0] (check [(apply str (repeat 257 "x"))])))))
 
 (defn -main [& _]
-  (let [result (run-tests 'clojure.data.json-native-test)]
+  (let [result (run-tests 'clojure.data.json-native-test
+                          'clojure.data.json-native-string-output-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))
