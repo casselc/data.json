@@ -9,6 +9,16 @@ Before a byte store, a full buffer is flushed and the cursor becomes zero.
 Both string loops start at zero, stop at the string length, and advance by one.
 The models cover the resulting indices, byte values, and cursor transitions.
 
+Source mapping reviewed for the local ASCII cursor and unexposed-sink reuse:
+the modeled scratch cursor represents `used` in `byte!` and the local `cursor`
+in `raw-string!`. Both check a full buffer before a store; the local loop
+publishes its cursor before escapes, flushes and completion. Its string index
+is guarded by `i != n`. The row completion/exposure proof changes sink reuse,
+not byte access or cursor arithmetic. Saved-frame restoration retains the
+same buffer/cursor slots; the new completion flag is outside these models.
+The fingerprint is a manual source-review fence, not automatic translation
+from Scheme or a proof of callback, lifetime or registry correctness.
+
 Run `bash scripts/check-byte-emitter-bounds.sh` with Z3 installed. The script
 rejects a changed emitter source until the source mapping has been reviewed.
 
@@ -34,7 +44,11 @@ ASCII, escapes, Unicode, and lengths around one and two scratch-buffer fills.
 The no-flush mutant is executed only after replacing every specialized access
 with checked access, so its expected failure cannot corrupt memory.
 
-The focused selected-runtime gate passed 21 tests / 253 assertions. Encoder-only
-ABBA measurements retain exact byte parity, raw samples, and p50/p90/p95/p99 in
-workspace evidence. Neither result establishes end-to-end throughput or tail
-qualification; the connected Durable comparison is a separate gate.
+The native byte/collector suites separately exercise exact wire bytes,
+boundary/cursor checked mutants, custom methods, prefix visibility, reentry,
+retained sinks and exceptions. Sink-reuse tests include a known-bad always-reuse
+control whose final JSON is unchanged but retained writers are corrupted.
+Those runtime controls are essential companions, not consequences of these
+integer models. Encoder measurements and application recovery remain separate
+evidence; neither these bounds checks nor a short screen qualifies throughput
+or tail latency.

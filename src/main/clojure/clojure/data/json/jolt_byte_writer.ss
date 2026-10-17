@@ -16,7 +16,9 @@
         (stock-slots (make-vector 11 #f))
         (used 0) (flush-epoch 0)
         (batch #f) (row-start 0) (exposed? #f) (ever-exposed? #f)
-        (row-value #f) (row-ending "") (row-previous #f) (row-loan #f))
+        (row-value #f) (row-ending "") (row-previous #f) (row-loan #f)
+        (row-complete? #f) (sink-reuse-proof (vector #f)))
+    (define (sink-reusable?) (vector-ref sink-reuse-proof 0))
     ;; Stock is immutable, but protocol implementations are NOT. Decode the
     ;; row's capability once while retaining live root/site checks per value.
     ;; Reentry restores the outer capability; idle factories retain none.
@@ -211,11 +213,17 @@
     ;; One set of dynamic-wind closures per serial factory, not per row.
     ;; Reentrant writes save and restore these invocation fields with the
     ;; existing writer/scratch context. Idle factories retain no input row.
-    (define (run-row!) (emit! row-value) (ascii! row-ending))
+    (define (run-row!)
+      (emit! row-value) (ascii! row-ending) (set! row-complete? #t))
     (define (flush-row!)
+      (vector-set! sink-reuse-proof 0 #f)
       (sync!) (flush-buffer!)
       (when (and batch ever-exposed?)
-        (sb-set! writer (djn-byte-batch-text batch row-start))))
+        (sb-set! writer (djn-byte-batch-text batch row-start)))
+      ;; Publish only after successful flush, before restoring the outer row.
+      ;; A throwing call cannot return this proof through the bound adapter.
+      (vector-set! sink-reuse-proof 0
+                   (and row-complete? batch (not ever-exposed?) #t)))
     (define (restore-row!)
       (let ((previous row-previous) (loan row-loan))
         (if previous
@@ -234,14 +242,16 @@
               (set! row-value (vector-ref previous 11))
               (set! row-ending (vector-ref previous 12))
               (set! row-previous (vector-ref previous 13))
-              (set! row-loan (vector-ref previous 14)))
+              (set! row-loan (vector-ref previous 14))
+              (set! row-complete? (vector-ref previous 15)))
             (begin
               (set! writer #f) (set! options #f) (set-stock! #f)
               (set! buf #f) (set! scratch #f)
               (set! batch #f) (set! row-start 0) (set! exposed? #f)
               (set! ever-exposed? #f) (set! used 0) (set! flush-epoch 0)
               (set! row-value #f) (set! row-ending "")
-              (set! row-previous #f) (set! row-loan #f)))
+              (set! row-previous #f) (set! row-loan #f)
+              (set! row-complete? #f)))
         (unless spare (set! spare loan))))
     (define (finish-row!)
       (dynamic-wind jolt-finally-in flush-row! restore-row!))
@@ -267,10 +277,12 @@
               ;; inner sync must not hide writes made after this call returns.
               (when borrowed? (set! exposed? #t)))))))
 
+    (djn-register-byte-writer-sink-proof!
     (case-lambda
      ;; Private companion accessor; ordinary four-argument calls are unchanged.
      (() render-empty-string)
      ((value call-writer call-options call-stock . endings)
+      (vector-set! sink-reuse-proof 0 #f)
       (unless (or (null? endings)
                   (and (equal? (car endings) "\n")
                        (or (null? (cdr endings))
@@ -294,18 +306,20 @@
                                (begin (set! qualified-defaults call-options) #t)))))
             (begin (djn-write! value call-writer call-options call-stock)
                    (unless (string=? ending "") (djn-sb-append! call-writer ending))
-                   (append-fallback! call-writer call-batch))
+                   (append-fallback! call-writer call-batch)
+                   (vector-set! sink-reuse-proof 0 #f))
             (if (djn-empty-default-vector! value call-writer call-options call-stock)
                 (begin
                   ;; Preserve the earlier native empty-vector win, including
                   ;; live custom vector dispatch, before allocating row state.
                   (unless (string=? ending "") (djn-sb-append! call-writer ending))
                   (append-fallback! call-writer call-batch)
+                  (vector-set! sink-reuse-proof 0 #f)
                   jolt-nil)
             (let ((previous (and writer
                                  (vector writer options stock buf used flush-epoch scratch
                                          batch row-start exposed? ever-exposed?
-                                         row-value row-ending row-previous row-loan)))
+                                         row-value row-ending row-previous row-loan row-complete?)))
                   (loan (or spare
                             (vector (make-bytevector 65536) (make-bytevector 21)))))
               (set! spare #f)
@@ -317,6 +331,7 @@
               (set! exposed? #f) (set! ever-exposed? #f)
               (set! row-value value) (set! row-ending ending)
               (set! row-previous previous) (set! row-loan loan)
+              (set! row-complete? #f)
               (dynamic-wind jolt-finally-in run-row! finish-row!)
-              jolt-nil))))))))
+              jolt-nil)))))) sink-reusable?)))
 djn-make-byte-buffer-writer

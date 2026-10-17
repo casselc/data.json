@@ -1,6 +1,19 @@
 ;; Caller-owned collector storage. Internal prototype, not a JSON/WAL format.
 ;; Rows can be replaced after observable custom-writer mutation; stock rows
 ;; append directly and materialize immutable text only once at batch completion.
+;; Only this companion's own factories can authorize sink reuse. Unknown
+;; procedure/IFn replacements keep fresh sinks without receiving a new call.
+;; Weak keys do not keep completed payload factories or their caches alive.
+(define djn-byte-writer-sink-proofs (make-weak-eq-hashtable))
+(define djn-byte-writer-sink-proofs-mu (make-mutex))
+(define (djn-register-byte-writer-sink-proof! write proof)
+  (jolt-with-mutex djn-byte-writer-sink-proofs-mu
+    (hashtable-set! djn-byte-writer-sink-proofs write proof))
+  write)
+(define (djn-byte-writer-sink-proof write)
+  (jolt-with-mutex djn-byte-writer-sink-proofs-mu
+    (hashtable-ref djn-byte-writer-sink-proofs write #f)))
+
 (define (djn-make-byte-batch)
   ;; Reverse full-chunk list, owned mutable tail, tail used, total used.
   ;; No grown backing ever needs to copy the preceding complete payload.

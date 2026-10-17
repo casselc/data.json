@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Reuse an unexposed row-local StringWriter in the explicit native byte
+  collector. A factory-owned successful-row proof is required; classification,
+  custom writers, fallback options and unknown factory replacements retain
+  fresh sinks. Preserve retained writers, reentry, exact output and row budgets.
+
 - Keep a local buffer cursor while emitting clean ASCII string runs, publishing
   it before escapes and flushes. Avoid an emitter call and shared cursor update
   for every plain byte without a pre-scan or temporary UTF-8 allocation. Preserve
