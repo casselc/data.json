@@ -8,6 +8,90 @@
 (defn- stock [rows]
   (apply str (map #(str (json/write-str %) "\n") rows)))
 
+(deftest warmed-unexposed-rows-reuse-a-sink-without-sharing-exposed-sinks
+  (native/load-payload-byte-buffer-writer!)
+  (let [factory @@#'native/bound-row-writer-factory
+        sinks (atom [])
+        rows (vec (repeat 32 ["warm" 42 {"key" "value"}]))]
+    ;; Internal allocation spy, not an application-visible writer callback.
+    (with-redefs [native/bound-row-writer-factory
+                  (delay (fn [write methods batch]
+                           (let [emit (factory write methods batch)]
+                             (fn [row out options]
+                               (swap! sinks conj out)
+                               (emit row out options)))))]
+      (is (= (stock rows) (native/write-batch-text! rows 100000))))
+    (is (= 32 (count @sinks)))
+    ;; A cold site must publish its prefix before classification; only later
+    ;; rows can prove their sink unexposed. Do not require cold-row reuse.
+    (is (not (identical? (first @sinks) (second @sinks))))
+    (is (every? #(identical? (last @sinks) %) (take-last 8 @sinks)))))
+
+(deftest proof-registry-returns-the-registered-getter-not-a-lock-body-thunk
+  (native/load-payload-byte-buffer-writer!)
+  (let [check (scheme/eval-string
+                "(lambda ()
+                   (let ((write (lambda () #f)) (proof (lambda () #t)))
+                     (djn-register-byte-writer-sink-proof! write proof)
+                     (and (eq? proof (djn-byte-writer-sink-proof write))
+                          (not (djn-byte-writer-sink-proof (lambda () #f))))))")]
+    (is (true? (check)))))
+
+(defn- retained-sink-control [force-reuse?]
+  (native/load-payload-byte-buffer-writer!)
+  (let [factory @@#'native/bound-row-writer-factory
+        sinks (atom [])
+        marker (fn [label]
+                 (reify json/JSONWriter
+                   (-write [_ out options]
+                     (swap! sinks conj out)
+                     (json/write label out options))))
+        rows (into (vec (repeat 4 ["warm" 42]))
+                   [[(marker "first")] ["warm" 42] [(marker "second")] ["warm" 42]])
+        run #(native/write-batch-text! rows 100000)
+        text (if force-reuse?
+               (with-redefs [native/bound-row-writer-factory
+                             (delay (fn [write methods batch]
+                                      (let [emit (factory write methods batch)]
+                                        (fn [row out options]
+                                          (emit row out options)
+                                          ;; Checked known-bad control: ignore
+                                          ;; actual exposure, never native bounds.
+                                          true))))]
+                 (run))
+               (run))]
+    {:text text :same-sink? (identical? (first @sinks) (second @sinks))
+     :retained (mapv #(.toString %) @sinks)}))
+
+(deftest exposure-proof-protects-retained-writers-and-kills-always-reuse-mutant
+  (let [normal (retained-sink-control false) mutant (retained-sink-control true)]
+    (is (= (:text normal) (:text mutant)))
+    (is (= ["[\"first\"]\n" "[\"second\"]\n"] (:retained normal)))
+    (is (false? (:same-sink? normal)))
+    (is (true? (:same-sink? mutant)))
+    (is (not= (:retained normal) (:retained mutant)))))
+
+(deftest unknown-procedure-factories-cannot-authorize-sink-reuse
+  (native/load-payload-byte-buffer-writer!)
+  (let [original native/load-payload-byte-buffer-writer! sinks (atom [])
+        write (original)
+        replacement (fn [& args]
+                      (when (seq args) (swap! sinks conj (second args)))
+                      (apply write args))
+        rows (vec (repeat 8 ["warm" 42]))]
+    (with-redefs [native/load-payload-byte-buffer-writer! (fn [] replacement)]
+      (is (= (stock rows) (native/write-batch-text! rows 10000))))
+    (is (= 8 (count @sinks)))
+    (is (every? false? (map identical? @sinks (rest @sinks))))))
+
+(deftest sink-proof-registry-does-not-retain-completed-factories
+  (let [weak (scheme/eval-string "(lambda (value) (weak-cons value #f))")
+        dead? (scheme/eval-string "(lambda (pair) (bwp-object? (car pair)))")
+        make-weak (fn [] (weak (native/load-payload-byte-buffer-writer!)))
+        references (mapv (fn [_] (make-weak)) (range 8))]
+    (dotimes [_ 2] (scheme/eval-string "(collect (collect-maximum-generation))"))
+    (is (every? true? (map dead? references)))))
+
 (deftest exact-segment-boundaries-and-unicode
   (doseq [n [0 1 65530 65531 65532 65535 65536 131067 131068]]
     (let [rows [[(apply str (repeat n "a"))] ["é😀/\n" false] []]

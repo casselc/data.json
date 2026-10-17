@@ -152,10 +152,18 @@
   (delay
     (scheme/eval-string
       "(lambda (write stock batch)
-         (if (procedure? write)
-             (lambda (row out options) (write row out options stock \"\\n\" batch))
+         (let ((proof (djn-byte-writer-sink-proof write)))
+           (cond
+             ((and (procedure? write) proof)
+              (lambda (row out options)
+                (write row out options stock \"\\n\" batch)
+                (proof)))
+             ((procedure? write)
+              (lambda (row out options)
+                (write row out options stock \"\\n\" batch) #f))
+             (else
              (lambda (row out options)
-               (jolt-invoke write row out options stock \"\\n\" batch))))")))
+               (jolt-invoke write row out options stock \"\\n\" batch) #f)))))")))
 
 (defn load-payload-byte-buffer-writer!
   "Experimental default-option byte sink. Flushes to the caller's real
@@ -218,14 +226,17 @@
               *batch-string-output-writer* string-output]
       (loop [remaining (let [source @row-source]
                          (vreset! row-source nil)
-                         (seq source))]
+                         (seq source))
+             reusable-out nil]
         (when (seq remaining)
-          (let [out (java.io.StringWriter.)]
-            (row-write (first remaining) out json/default-write-options))
+          (let [out (or reusable-out (java.io.StringWriter.))
+                reusable? (row-write (first remaining) out json/default-write-options)]
           (when (> (- (size batch) prefix-size) max-bytes)
             (throw (ex-info "JSONEachRow output exceeds its byte limit"
                             {:type ::output-limit})))
-          (recur (next remaining)))))
+          ;; Never recycle a sink that classification/custom code could have
+          ;; retained. Unknown factories and fallback options return false.
+          (recur (next remaining) (when reusable? out))))))
     (finish batch 0)))
 
 (defn write-prefixed-batch-text!
