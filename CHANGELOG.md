@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Emit native byte-writer strings directly instead of looking up and retaining
+  escaped fragments. Avoid per-value content hashing and cache-copy work after
+  the local ASCII cursor optimization. Keep live dispatch, escaping, callback
+  visibility, reentry and output budgets unchanged.
+
 - Reuse an unexposed row-local StringWriter in the explicit native byte
   collector. A factory-owned successful-row proof is required; classification,
   custom writers, fallback options and unknown factory replacements retain

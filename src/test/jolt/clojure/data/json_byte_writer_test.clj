@@ -17,6 +17,41 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest direct-strings-preserve-repeated-values-and-exact-row-budgets
+  (doseq [text ["" "short" (apply str (repeat 32 "a"))
+                (apply str (repeat 256 "a")) "\u0000\u001f\u007fé😀/\"\\\n"]]
+    (let [row (vec (repeat 128 text))
+          expected (str (json/write-str row) "\n")
+          limit (alength (.getBytes expected "UTF-8"))]
+      (is (= expected (String. (native/write-prefixed-batch-bytes! "" [row] limit) "UTF-8")))
+      (is (= ::native/output-limit
+             (:type (ex-data
+                      (try (native/write-prefixed-batch-bytes! "" [row] (dec limit))
+                           nil (catch Throwable error error)))))))))
+
+(defn- fragment-cache-probe [source value]
+  (let [probe (scheme/eval-string
+                (str "(let ((lookups 0) (base-ref hashtable-ref)) "
+                     "(let ((hashtable-ref (lambda (table key default) "
+                     "(set! lookups (+ lookups 1)) (base-ref table key default)))) "
+                     source
+                     " (jolt-vector djn-make-byte-buffer-writer (lambda () lookups))))"))
+        write ((nth probe 0)) out (java.io.StringWriter.)]
+    (write value out json/default-write-options @#'json/native-writer-stock)
+    [(.toString out) ((nth probe 1))]))
+
+(deftest direct-string-emission-does-not-look-up-fragments
+  (native/load-payload-byte-buffer-writer!)
+  (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+        mutant (string/replace source "(define (string! s)"
+                               "(define (string! s) (hashtable-ref (make-hashtable string-hash string=?) s #f)")
+        value ["repeated" "repeated"] expected (json/write-str value)]
+    (is (not= source mutant))
+    (is (= [expected 0] (fragment-cache-probe source value)))
+    ;; The mutant preserves bytes but brings lookups back; this protects the
+    ;; actual optimization mechanism, not a source-string or timing threshold.
+    (is (= [expected 2] (fragment-cache-probe mutant value)))))
+
 (deftest local-ascii-cursor-does-not-call-the-scalar-emitter-per-byte
   (native/load-payload-byte-buffer-writer!)
   (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))

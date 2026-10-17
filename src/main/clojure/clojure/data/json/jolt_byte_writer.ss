@@ -1,11 +1,10 @@
-;; Opt-in byte writer: one serial payload owns the emitter and bounded caches.
+;; Opt-in byte writer: one serial payload owns the emitter and bounded scratch.
 ;; Per-row operations borrow scratch and establish a restorable context; helper
 ;; closures are constructed once, not once for every row. Default options only.
 (define (djn-make-byte-buffer-writer)
   (unless (bitwise-bit-set? (procedure-arity-mask make-protocol-method-site) 3)
     (error 'byte-writer "runtime lacks observable classification boundary"))
   (let ((spare (vector (make-bytevector 65536) (make-bytevector 21)))
-        (strings (make-hashtable string-hash string=?)) (cached-bytes 0)
         (abi-tag (keyword "clojure.data.json" "native-writer-v1"))
         (qualified-defaults #f)
         (writer #f) (options #f) (stock #f) (buf #f) (scratch #f)
@@ -14,7 +13,7 @@
         ;; two slots hold functions from this row's immutable option map, not
         ;; cached Var roots or decisions about any receiver value.
         (stock-slots (make-vector 11 #f))
-        (used 0) (flush-epoch 0)
+        (used 0)
         (batch #f) (row-start 0) (exposed? #f) (ever-exposed? #f)
         (row-value #f) (row-ending "") (row-previous #f) (row-loan #f)
         (row-complete? #f) (sink-reuse-proof (vector #f)))
@@ -51,8 +50,7 @@
           ;; chunk as the materialized base, avoiding a second copy on
           ;; the caller's subsequent toString. Nonempty sinks append.
           (djn-sb-install-or-append! writer text))))
-      (set! used 0))
-    (set! flush-epoch (+ flush-epoch 1)))
+      (set! used 0)))
   (define (flush!)
     (flush-buffer!)
     (when batch
@@ -83,7 +81,7 @@
     (do ((shift 12 (fx- shift 4))) ((fx<? shift 0))
       (let ((n (fxand (fxsra cp shift) 15)))
         (byte! (if (fx<? n 10) (fx+ 48 n) (fx+ 87 n))))))
-  (define (raw-string! s)
+  (define (string! s)
     (byte! 34)
     ;; No pre-scan or temporary UTF-8 copy. Clean ASCII advances a local cursor
     ;; instead of calling byte!/updating its captured mutable cell per byte.
@@ -123,22 +121,6 @@
         (let ((n (fxmin (fx- end offset) (fx- 65536 used))))
           (bytevector-copy! bytes offset buf used n)
           (set! used (fx+ used n)) (loop (fx+ offset n))))))
-  (define (append-bytes! bytes)
-    (append-range! bytes 0 (bytevector-length bytes)))
-  (define (string! s)
-    ;; Consult ONLY after the live stock String implementation matched.
-    ;; Default escaping is fixed; never cache callbacks/custom methods.
-    (let ((hit (hashtable-ref strings s #f)))
-      (if hit (append-bytes! hit)
-          (let ((start used) (epoch flush-epoch))
-            (raw-string! s)
-            (when (and (<= (string-length s) 256)
-                       (= epoch flush-epoch) (< (hashtable-size strings) 128)
-                       (<= (+ cached-bytes (- used start) (* 4 (string-length s))) 65536))
-              (let ((bytes (make-bytevector (- used start))))
-                (bytevector-copy! buf start bytes 0 (- used start))
-                (hashtable-set! strings (string-copy s) bytes)
-                (set! cached-bytes (+ cached-bytes (- used start) (* 4 (string-length s))))))))))
   (define (integer! n)
     (if (not (<= -9223372036854775808 n 18446744073709551615))
         (ascii! (djn-integer-string n))
@@ -233,22 +215,21 @@
               (set-stock! (vector-ref previous 2))
               (set! buf (vector-ref previous 3))
               (set! used (vector-ref previous 4))
-              (set! flush-epoch (vector-ref previous 5))
-              (set! scratch (vector-ref previous 6))
-              (set! batch (vector-ref previous 7))
-              (set! row-start (vector-ref previous 8))
-              (set! exposed? (vector-ref previous 9))
-              (set! ever-exposed? (vector-ref previous 10))
-              (set! row-value (vector-ref previous 11))
-              (set! row-ending (vector-ref previous 12))
-              (set! row-previous (vector-ref previous 13))
-              (set! row-loan (vector-ref previous 14))
-              (set! row-complete? (vector-ref previous 15)))
+              (set! scratch (vector-ref previous 5))
+              (set! batch (vector-ref previous 6))
+              (set! row-start (vector-ref previous 7))
+              (set! exposed? (vector-ref previous 8))
+              (set! ever-exposed? (vector-ref previous 9))
+              (set! row-value (vector-ref previous 10))
+              (set! row-ending (vector-ref previous 11))
+              (set! row-previous (vector-ref previous 12))
+              (set! row-loan (vector-ref previous 13))
+              (set! row-complete? (vector-ref previous 14)))
             (begin
               (set! writer #f) (set! options #f) (set-stock! #f)
               (set! buf #f) (set! scratch #f)
               (set! batch #f) (set! row-start 0) (set! exposed? #f)
-              (set! ever-exposed? #f) (set! used 0) (set! flush-epoch 0)
+              (set! ever-exposed? #f) (set! used 0)
               (set! row-value #f) (set! row-ending "")
               (set! row-previous #f) (set! row-loan #f)
               (set! row-complete? #f)))
@@ -317,7 +298,7 @@
                   (vector-set! sink-reuse-proof 0 #f)
                   jolt-nil)
             (let ((previous (and writer
-                                 (vector writer options stock buf used flush-epoch scratch
+                                 (vector writer options stock buf used scratch
                                          batch row-start exposed? ever-exposed?
                                          row-value row-ending row-previous row-loan row-complete?)))
                   (loan (or spare
@@ -325,7 +306,7 @@
               (set! spare #f)
               (set! writer call-writer) (set! options call-options) (set-stock! call-stock)
               (set! buf (vector-ref loan 0)) (set! scratch (vector-ref loan 1))
-              (set! used 0) (set! flush-epoch 0)
+              (set! used 0)
               (set! batch call-batch)
               (set! row-start (if batch (djn-byte-batch-size batch) 0))
               (set! exposed? #f) (set! ever-exposed? #f)
