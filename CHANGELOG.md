@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Keep the Jolt-only byte-writer suite in the native test-source directory,
+  where the qualified native CI lane runs it without making JVM tests load
+  Jolt runtime namespaces.
+
 - Run the source-only native writer and byte-collector tests in CI on an
   authenticated, checksum-pinned capable runtime, separately from portable
   Jolt/JVM tests. No performance thresholds or native-default changes.

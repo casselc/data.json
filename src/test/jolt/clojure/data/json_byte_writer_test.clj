@@ -1,4 +1,5 @@
 (ns clojure.data.json-byte-writer-test
+  "Jolt-only native writer contracts; not part of Maven's portable test root."
   (:require [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
             [clojure.string :as string]
