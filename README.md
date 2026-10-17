@@ -153,6 +153,27 @@ wrapper, separately from portable/JVM and native-writer gates. The callback is
 an experimental trusted backend contract: result-shape checks do not prove an
 arbitrary replacement preserves JSON semantics. It is not enabled by default.
 
+### Optional native JSON string output (fork only)
+
+On the qualified compiler-bearing Jolt runtime, callers can explicitly use:
+
+```clojure
+(require '[clojure.data.json.jolt-native :as native])
+(native/write-str []) ; => "[]"
+```
+
+This avoids a temporary writer for a stock empty vector with default options.
+Other values still use the current public `json/write-str`. Replaced writers,
+changed options and custom native hooks keep their behavior. Nothing is
+enabled globally; ordinary `json/write-str`, JVM and Babashka are unchanged.
+Do not load this Jolt-only namespace on those other hosts. Standalone/AOT
+use is not qualified.
+
+The explicit byte-batch collector also supplies this optimization while lazy
+rows are being produced. Its companion belongs to that batch's writer only;
+custom methods still receive real writers, and nested calls preserve the
+outer writer's visible prefix. This adds no telemetry or dispatch cache.
+
 Other versions:
 
 * [All Released Versions](https://search.maven.org/#search%7Cgav%7C1%7Cg%3A%22org.clojure%22%20AND%20a%3A%22data.json%22)

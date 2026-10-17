@@ -2,6 +2,23 @@
 
 ## Unreleased — experimental, fork-only
 
+- Keep the Jolt-only byte-writer suite in the native test-source directory,
+  where the qualified native CI lane runs it without making JVM tests load
+  Jolt runtime namespaces.
+
+- Run the source-only native writer and byte-collector tests in CI on an
+  authenticated, checksum-pinned capable runtime, separately from portable
+  Jolt/JVM tests. No performance thresholds or native-default changes.
+
+- Supply a byte-collector-owned companion for nested string output during
+  lazy row production. Preserve custom hooks, prefix visibility and reentry;
+  synchronizing an outer writer does not release its enclosing callback borrow.
+
+- Add explicit native string output for default-option calls. Stock empty
+  vectors avoid temporary writer allocation, while live replacements, options,
+  native-writer hooks and custom collection methods retain their behavior.
+  Default JSON APIs and backend selection remain unchanged.
+
 - Use guarded StringWriter operations when Jolt's writer shares a synchronized
   StringBuffer. Keep the empty-sink install/append decision under one monitor;
   older runtime representation remains supported. Native writer factories still

@@ -1177,6 +1177,10 @@
 
 ;;; JSON PRETTY-PRINTER
 
+;; Defining-namespace identity for the explicit optional string-output adapter.
+;; A replacement installed before that adapter loads must remain observable.
+(def ^:private native-write-str-original write-str)
+
 ;; Based on code by Tom Faulhaber
 
 (defn- pprint-array [s] 
