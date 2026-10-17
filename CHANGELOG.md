@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Emit short clean ASCII strings directly into available native scratch without
+  fragment-cache hashing. Publish the cursor only after full qualification;
+  escaped/Unicode strings and buffer-boundary cases keep the existing cached
+  path. Preserve live dispatch, observation boundaries, reentry and budgets.
+
 - Reuse an unexposed row-local StringWriter in the explicit native byte
   collector. A factory-owned successful-row proof is required; classification,
   custom writers, fallback options and unknown factory replacements retain

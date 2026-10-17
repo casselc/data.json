@@ -17,6 +17,42 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(defn- fragment-cache-probe [source value]
+  (let [probe (scheme/eval-string
+                (str "(let ((lookups 0) (base-ref hashtable-ref)) "
+                     "(let ((hashtable-ref (lambda (table key default) "
+                     "(set! lookups (+ lookups 1)) (base-ref table key default)))) "
+                     source
+                     " (jolt-vector djn-make-byte-buffer-writer (lambda () lookups))))"))
+        write ((nth probe 0)) out (java.io.StringWriter.)]
+    (write value out json/default-write-options @#'json/native-writer-stock)
+    [(.toString out) ((nth probe 1))]))
+
+(deftest small-ascii-avoids-cache-without-disabling-unicode-or-medium-caching
+  (native/load-payload-byte-buffer-writer!)
+  (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+        mutant (string/replace source "(unless (try-small-ascii! s)" "(unless #f")
+        value ["repeated" "repeated"] expected (json/write-str value)]
+    (is (not= source mutant))
+    (is (= [expected 0] (fragment-cache-probe source value)))
+    ;; Same bytes, but disabling admission returns to two cache lookups.
+    (is (= [expected 2] (fragment-cache-probe mutant value)))
+    (doseq [text ["é😀" (apply str (repeat 64 "a"))]]
+      (is (= [(json/write-str [text text]) 2]
+             (fragment-cache-probe source [text text]))))))
+
+(deftest small-ascii-decline-does-not-publish-a-speculative-prefix
+  (doseq [n (range 18) marker ["" "tail" "/" "\"" "\\" "\n" "é" "😀"]]
+    (let [text (str (apply str (repeat n "a")) marker)
+          row ["head" text "tail"]
+          expected (str (json/write-str row) "\n")
+          limit (alength (.getBytes expected "UTF-8"))]
+      (is (= expected (String. (native/write-prefixed-batch-bytes! "" [row] limit) "UTF-8")))
+      (is (= ::native/output-limit
+             (:type (ex-data
+                      (try (native/write-prefixed-batch-bytes! "" [row] (dec limit))
+                           nil (catch Throwable error error)))))))))
+
 (deftest local-ascii-cursor-does-not-call-the-scalar-emitter-per-byte
   (native/load-payload-byte-buffer-writer!)
   (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
