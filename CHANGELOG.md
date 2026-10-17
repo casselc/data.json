@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Run the source-only native writer and byte-collector tests in CI on an
+  authenticated, checksum-pinned capable runtime, separately from portable
+  Jolt/JVM tests. No performance thresholds or native-default changes.
+
 - Supply a byte-collector-owned companion for nested string output during
   lazy row production. Preserve custom hooks, prefix visibility and reentry;
   synchronizing an outer writer does not release its enclosing callback borrow.
