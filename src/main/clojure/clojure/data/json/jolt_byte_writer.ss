@@ -230,7 +230,31 @@
     (define (finish-row!)
       (dynamic-wind jolt-finally-in flush-row! restore-row!))
 
-    (lambda (value call-writer call-options call-stock . endings)
+    (define (render-empty-string value call-options call-stock)
+      ;; The companion adapter already checked empty-vector/default/public
+      ;; identities, including this exact bound factory. Use THIS factory's
+      ;; site so observable receiver predicates see a materialized outer prefix.
+      (let ((outer writer) (borrowed? exposed?))
+        (dynamic-wind jolt-finally-in
+          (lambda ()
+            (let ((impl (site value)))
+              (when writer (sync!))
+              (if (eq? impl (pvec-nth! call-stock 8)) "[]"
+                  (let ((sink (host-new "StringWriter")))
+                    (when writer (flush!))
+                    (jolt-invoke3 impl value sink call-options)
+                    (djn-sb-str sink)))))
+          (lambda ()
+            (when (and writer (eq? writer outer))
+              (sync!)
+              ;; The enclosing callback STILL owns its borrowed writer. An
+              ;; inner sync must not hide writes made after this call returns.
+              (when borrowed? (set! exposed? #t)))))))
+
+    (case-lambda
+     ;; Private companion accessor; ordinary four-argument calls are unchanged.
+     (() render-empty-string)
+     ((value call-writer call-options call-stock . endings)
       (unless (or (null? endings)
                   (and (equal? (car endings) "\n")
                        (or (null? (cdr endings))
@@ -278,5 +302,5 @@
               (set! row-value value) (set! row-ending ending)
               (set! row-previous previous) (set! row-loan loan)
               (dynamic-wind jolt-finally-in run-row! finish-row!)
-              jolt-nil)))))))
+              jolt-nil))))))))
 djn-make-byte-buffer-writer

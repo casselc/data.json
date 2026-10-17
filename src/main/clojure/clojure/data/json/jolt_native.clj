@@ -101,23 +101,29 @@
     (throw (ex-info "Missing native string-output resource" {}))))
 
 (def ^:private string-output-source (string-writer-source))
+(def ^:private string-output-factory
+  (delay (do (load-writer!) (scheme/eval-string string-output-source))))
 (def ^:private string-output-writer
   (delay
-    (load-writer!)
-    (let [factory (scheme/eval-string string-output-source)]
+    (let [factory @string-output-factory]
       (factory @#'json/native-write-str-original #'json/write-str
                #'json/*experimental-native-writer* #'json/default-write-options
                @#'json/native-writer-stock))))
+
+(def ^:private ^:dynamic *batch-string-output-writer* nil)
 
 (defn write-str
   "Explicit source-only JSON string output with the ordinary default options.
   A stock empty builtin vector can avoid a temporary StringWriter; live method
   resolution still runs once. Other inputs, changed public writers/options or
-  a bound native-writer hook retain the current public write-str path. Custom
+  an unknown native-writer hook retain the current public write-str path. The
+  owned byte collector supplies a companion with its own visibility boundary. Custom
   vector methods receive a fresh real writer. No output or dispatch cache;
   does not install a backend or qualify standalone/AOT use."
   [value]
-  (@string-output-writer value))
+  (if *batch-string-output-writer*
+    (*batch-string-output-writer* value)
+    (@string-output-writer value)))
 
 (defn load-payload-string-caching-writer!
   "Return a source-only experimental writer for one caller-owned serial payload.
@@ -179,6 +185,10 @@
   (when-not (or (nil? rows) (sequential? rows))
     (throw (ex-info "JSONEachRow requires sequential rows" {:type ::invalid-rows})))
   (let [write (load-payload-byte-buffer-writer!)
+        string-output (@string-output-factory
+                        @#'json/native-write-str-original #'json/write-str
+                        #'json/*experimental-native-writer* #'json/default-write-options
+                        @#'json/native-writer-stock write (write))
         make (scheme/proc "djn-make-byte-batch")
         size (scheme/proc "djn-byte-batch-size")
         finish (scheme/proc finalizer)
@@ -192,7 +202,8 @@
         ;; so lazy row production observes the same context without retaining
         ;; all previously realized rows through that closure.
         row-source (volatile! rows)]
-    (binding [json/*experimental-native-writer* write]
+    (binding [json/*experimental-native-writer* write
+              *batch-string-output-writer* string-output]
       (loop [remaining (let [source @row-source]
                          (vreset! row-source nil)
                          (seq source))]

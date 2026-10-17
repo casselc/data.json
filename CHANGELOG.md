@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Supply a byte-collector-owned companion for nested string output during
+  lazy row production. Preserve custom hooks, prefix visibility and reentry;
+  synchronizing an outer writer does not release its enclosing callback borrow.
+
 - Add explicit native string output for default-option calls. Stock empty
   vectors avoid temporary writer allocation, while live replacements, options,
   native-writer hooks and custom collection methods retain their behavior.
