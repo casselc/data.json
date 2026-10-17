@@ -125,9 +125,30 @@
           (set! used (fx+ used n)) (loop (fx+ offset n))))))
   (define (append-bytes! bytes)
     (append-range! bytes 0 (bytevector-length bytes)))
+  (define (try-small-ascii! s)
+    ;; Pure, bounded speculation in PRIVATE unused scratch. Only publish used
+    ;; after the whole string qualifies. A decline may overwrite unused bytes
+    ;; but cannot expose a quote/prefix or change the fallback's starting point.
+    ;; With 0<=used<=65536 and used+n+2<=65536, opening used, characters
+    ;; used+1+i (0<=i<n) and closing used+n+1 are all <65536. Successful
+    ;; publication advances used to at most65536; no loop can flush or call out.
+    (let ((n (string-length s)))
+      (and (fx<? n 16) (fx<=? (fx+ used (fx+ n 2)) 65536)
+        (begin
+          (#3%bytevector-u8-set! buf used 34)
+          (let loop ((i 0) (cursor (fx+ used 1)))
+            (if (fx=? i n)
+                (begin (#3%bytevector-u8-set! buf cursor 34)
+                       (set! used (fx+ cursor 1)) #t)
+                (let ((cp (char->integer (#3%string-ref s i))))
+                  (and (fx>=? cp 32) (fx<=? cp 127)
+                       (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47))
+                       (begin (#3%bytevector-u8-set! buf cursor cp)
+                              (loop (fx+ i 1) (fx+ cursor 1)))))))))))
   (define (string! s)
     ;; Consult ONLY after the live stock String implementation matched.
     ;; Default escaping is fixed; never cache callbacks/custom methods.
+    (unless (try-small-ascii! s)
     (let ((hit (hashtable-ref strings s #f)))
       (if hit (append-bytes! hit)
           (let ((start used) (epoch flush-epoch))
@@ -138,7 +159,7 @@
               (let ((bytes (make-bytevector (- used start))))
                 (bytevector-copy! buf start bytes 0 (- used start))
                 (hashtable-set! strings (string-copy s) bytes)
-                (set! cached-bytes (+ cached-bytes (- used start) (* 4 (string-length s))))))))))
+                (set! cached-bytes (+ cached-bytes (- used start) (* 4 (string-length s)))))))))))
   (define (integer! n)
     (if (not (<= -9223372036854775808 n 18446744073709551615))
         (ascii! (djn-integer-string n))
