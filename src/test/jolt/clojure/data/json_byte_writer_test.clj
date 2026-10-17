@@ -63,6 +63,26 @@
       (is (= prefix @seen))
       (is (= (str prefix "0,\"tail\"]\n") output)))))
 
+(deftest local-ascii-cursor-flush-guard-has-a-checked-negative-control
+  (native/load-payload-byte-buffer-writer!)
+  (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+        ;; NEVER exercise a broken bound with unchecked stores. First restore
+        ;; checked primitives, then remove only this new cursor's flush guard.
+        checked (-> source
+                    (string/replace "#3%bytevector-u8-set!" "bytevector-u8-set!")
+                    (string/replace "#3%string-ref" "string-ref"))
+        mutant (string/replace checked "(fx=? cursor 65536)" "#f")
+        factory (fn [body]
+                  (scheme/eval-string (str "(let () " body " djn-make-byte-buffer-writer)")))
+        text (apply str (repeat 65537 "a"))
+        good-out (java.io.StringWriter.)
+        bad-out (java.io.StringWriter.)]
+    (is (not= checked mutant))
+    (((factory checked)) text good-out json/default-write-options @#'json/native-writer-stock)
+    (is (= (json/write-str text) (.toString good-out)))
+    (is (thrown? Throwable
+          (((factory mutant)) text bad-out json/default-write-options @#'json/native-writer-stock)))))
+
 (deftest byte-prefix-setter-enters-the-receivers-own-monitor
   (native/load-payload-byte-buffer-writer!)
   (when (scheme/eval-string "djn-locked-writer-runtime?")
