@@ -148,6 +148,15 @@
 (def ^:private byte-factory
   (delay (do (load-writer!) (scheme/eval-string byte-source))))
 
+(def ^:private bound-row-writer-factory
+  (delay
+    (scheme/eval-string
+      "(lambda (write stock batch)
+         (if (procedure? write)
+             (lambda (row out options) (write row out options stock \"\\n\" batch))
+             (lambda (row out options)
+               (jolt-invoke write row out options stock \"\\n\" batch))))")))
+
 (defn load-payload-byte-buffer-writer!
   "Experimental default-option byte sink. Flushes to the caller's real
   StringWriter before observable protocol classification, custom writers, and
@@ -197,6 +206,9 @@
         _ (prepend batch prefix)
         prefix-size (size batch)
         stock @#'clojure.data.json/native-writer-stock
+        ;; These three identities are already fixed for this payload. Keep
+        ;; options live per row, but avoid the general six-argument bridge.
+        row-write (@bound-row-writer-factory write stock batch)
         ;; The binding thunk must not capture the original lazy sequence head
         ;; throughout the batch. Hand it off once, inside the writer binding,
         ;; so lazy row production observes the same context without retaining
@@ -209,7 +221,7 @@
                          (seq source))]
         (when (seq remaining)
           (let [out (java.io.StringWriter.)]
-            (write (first remaining) out json/default-write-options stock "\n" batch))
+            (row-write (first remaining) out json/default-write-options))
           (when (> (- (size batch) prefix-size) max-bytes)
             (throw (ex-info "JSONEachRow output exceeds its byte limit"
                             {:type ::output-limit})))

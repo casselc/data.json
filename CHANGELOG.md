@@ -2,6 +2,10 @@
 
 ## Unreleased — experimental, fork-only
 
+- Bind payload-stable writer, stock methods and byte batch in a native row
+  adapter, avoiding a general-arity bridge per row. Row-local writers,
+  per-row options, custom dispatch and byte-budget ordering are unchanged.
+
 - Keep the Jolt-only byte-writer suite in the native test-source directory,
   where the qualified native CI lane runs it without making JVM tests load
   Jolt runtime namespaces.

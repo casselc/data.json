@@ -102,6 +102,32 @@
                  :allowed
                  (catch Throwable _ :rejected))))))))
 
+(deftest bound-row-adapter-keeps-nonprocedure-writers-and-options-live
+  (let [write (native/load-payload-byte-buffer-writer!)
+        calls (atom [])
+        original json/default-write-options
+        changed (assoc original :escape-slash false)
+        replacement
+        (reify clojure.lang.IFn
+          (invoke [_] (write))
+          (invoke [_ row out options stock ending batch]
+            (swap! calls conj [row (identical? options original) ending])
+            (write row out options stock ending batch)))
+        ;; Do not use chunked map: producing row1 early would change the
+        ;; options before row0 is written, in both the old and new collectors.
+        rows ((fn source [n]
+                (lazy-seq
+                  (when (< n 2)
+                    (when (= n 1)
+                      (alter-var-root #'json/default-write-options (constantly changed)))
+                    (cons ["a/b" n] (source (inc n)))))) 0)]
+    (with-redefs [json/default-write-options original
+                  native/load-payload-byte-buffer-writer! (fn [] replacement)]
+      (is (= "[\"a\\/b\",0]\n[\"a/b\",1]\n"
+             (String. (native/write-prefixed-batch-bytes! "" rows 1024) "UTF-8"))))
+    (is (= [[["a/b" 0] true "\n"] [["a/b" 1] false "\n"]] @calls))
+    (is (identical? original json/default-write-options))))
+
 (deftest completed-lazy-rows-are-released-without-moving-production-outside-binding
   (let [weak (scheme/eval-string "(lambda (row) (weak-cons row #f))")
         alive? (scheme/eval-string "(lambda (pair) (not (bwp-object? (car pair))))")
