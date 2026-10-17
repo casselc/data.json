@@ -17,6 +17,57 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest byte-prefix-setter-enters-the-receivers-own-monitor
+  (native/load-payload-byte-buffer-writer!)
+  (when (scheme/eval-string "djn-locked-writer-runtime?")
+    (let [probe
+          (scheme/eval-string
+            "(lambda (run unsafe?)
+               (let ((set-text sb-set!) (lock jolt-call-with-monitor)
+                     (inside #f) (calls 0) (matched 0) (missed 0))
+                 (define (raw-set! self text)
+                   (let* ((st (jhost-state self)) (n (string-length text)))
+                     (%sb-grow-cap! st n)
+                     (vector-set! st 0 \"\") (vector-set! st 1 n)
+                     (vector-set! st 3 text)
+                     (vector-set! st 5 (if (= n 0) '() (list text)))
+                     (vector-set! st 6 0)))
+                 (dynamic-wind
+                   (lambda ()
+                     (set! jolt-call-with-monitor
+                       (lambda (m thunk)
+                         (when (and inside (eq? m (vector-ref (jhost-state inside) 4)))
+                           (set! matched (+ matched 1)))
+                         (lock m thunk)))
+                     (set! sb-set!
+                       (lambda (self text)
+                         (let ((previous inside) (before matched))
+                           (set! calls (+ calls 1))
+                           (dynamic-wind
+                             (lambda () (set! inside self))
+                             (lambda () ((if unsafe? raw-set! set-text) self text))
+                             (lambda () (set! inside previous)))
+                           (when (= matched before) (set! missed (+ missed 1)))))))
+                   (lambda () (jolt-invoke0 run) (jolt-vector calls matched missed))
+                   (lambda () (set! sb-set! set-text)
+                              (set! jolt-call-with-monitor lock)))))")
+          exercise
+          (fn []
+            (let [write (native/load-payload-byte-buffer-writer!)
+                  out (java.io.StringWriter.)
+                  batch ((scheme/proc "djn-make-byte-batch"))
+                  callback (reify json/JSONWriter
+                             (-write [_ sink options] (json/write "custom" sink options)))]
+              (write ["prefix" callback "suffix"] out json/default-write-options
+                     @#'json/native-writer-stock "\n" batch)
+              (is (= "[\"prefix\",\"custom\",\"suffix\"]\n" (.toString out)))))
+          [calls guarded missed] (probe exercise false)
+          [bad-calls bad-guarded bad-missed] (probe exercise true)]
+      (is (pos? calls)) (is (= calls guarded)) (is (zero? missed))
+      ;; Same setter call sites and exact output, but the unsafe implementation
+      ;; never enters that writer's monitor. The probe must reject it.
+      (is (= calls bad-calls)) (is (zero? bad-guarded)) (is (= bad-calls bad-missed)))))
+
 (deftest writer-helper-access-respects-new-runtime-monitor
   (native/load-payload-byte-buffer-writer!)
   (let [locking? (scheme/eval-string "djn-locked-writer-runtime?")]
