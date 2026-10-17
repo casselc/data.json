@@ -2,6 +2,11 @@
 
 ## Unreleased — experimental, fork-only
 
+- Keep a local buffer cursor while emitting clean ASCII string runs, publishing
+  it before escapes and flushes. Avoid an emitter call and shared cursor update
+  for every plain byte without a pre-scan or temporary UTF-8 allocation. Preserve
+  exact escaping, row visibility, reentry and byte-budget boundaries.
+
 - Bind payload-stable writer, stock methods and byte batch in a native row
   adapter, avoiding a general-arity bridge per row. Row-local writers,
   per-row options, custom dispatch and byte-budget ordering are unchanged.

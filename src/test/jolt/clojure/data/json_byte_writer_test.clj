@@ -17,6 +17,72 @@
   (binding [json/*experimental-native-writer* (native/load-payload-byte-buffer-writer!)]
     (json/write-str x)))
 
+(deftest local-ascii-cursor-does-not-call-the-scalar-emitter-per-byte
+  (native/load-payload-byte-buffer-writer!)
+  (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+        observed (string/replace source "(define (byte! b)"
+                                 "(define (byte! b) (set! byte-calls (+ byte-calls 1))")
+        _ (is (not= source observed))
+        probe (scheme/eval-string
+                (str "(let ((byte-calls 0)) " observed
+                     " (jolt-vector djn-make-byte-buffer-writer (lambda () byte-calls)))"))
+        write ((nth probe 0))
+        out (java.io.StringWriter.)
+        text (apply str (repeat 1024 "a"))]
+    (write text out json/default-write-options @#'json/native-writer-stock)
+    (is (= (json/write-str text) (.toString out)))
+    ;; A scalar-emitter mutant still produces correct bytes but calls byte!
+    ;; 1026 times, so the test protects the actual optimization mechanism.
+    (is (= 2 ((nth probe 1))))))
+
+(deftest local-ascii-cursor-preserves-escapes-flush-boundaries-and-exact-budget
+  (doseq [n (range 65520 65540)
+          marker ["tail" "/\"\\\n" "\u0000\u001f\u007fé😀"]]
+    (let [row [(apply str (repeat n "a")) marker "last"]
+          prefix "prefix-not-in-row-budget "
+          payload (str (json/write-str row) "\n")
+          budget (alength (.getBytes payload "UTF-8"))
+          expected (str prefix payload)
+          result (native/write-prefixed-batch-bytes! prefix [row] budget)]
+      (is (= expected (String. result "UTF-8")))
+      (is (= ::native/output-limit
+             (:type (ex-data
+                      (try (native/write-prefixed-batch-bytes! prefix [row] (dec budget))
+                           nil (catch Throwable error error)))))))))
+
+(deftest local-ascii-cursor-publishes-the-complete-prefix-before-a-callback
+  (doseq [n [65530 65534 65535 65536 65537]]
+    (let [text (str (apply str (repeat n "a")) "/😀")
+          seen (atom nil)
+          callback (reify json/JSONWriter
+                     (-write [_ out _]
+                       (reset! seen (.toString out))
+                       (.write out "0")))
+          prefix (str "[" (json/write-str text) ",")
+          output (native/write-batch-text! [[text callback "tail"]] 200000)]
+      (is (= prefix @seen))
+      (is (= (str prefix "0,\"tail\"]\n") output)))))
+
+(deftest local-ascii-cursor-flush-guard-has-a-checked-negative-control
+  (native/load-payload-byte-buffer-writer!)
+  (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
+        ;; NEVER exercise a broken bound with unchecked stores. First restore
+        ;; checked primitives, then remove only this new cursor's flush guard.
+        checked (-> source
+                    (string/replace "#3%bytevector-u8-set!" "bytevector-u8-set!")
+                    (string/replace "#3%string-ref" "string-ref"))
+        mutant (string/replace checked "(fx=? cursor 65536)" "#f")
+        factory (fn [body]
+                  (scheme/eval-string (str "(let () " body " djn-make-byte-buffer-writer)")))
+        text (apply str (repeat 65537 "a"))
+        good-out (java.io.StringWriter.)
+        bad-out (java.io.StringWriter.)]
+    (is (not= checked mutant))
+    (((factory checked)) text good-out json/default-write-options @#'json/native-writer-stock)
+    (is (= (json/write-str text) (.toString good-out)))
+    (is (thrown? Throwable
+          (((factory mutant)) text bad-out json/default-write-options @#'json/native-writer-stock)))))
+
 (deftest byte-prefix-setter-enters-the-receivers-own-monitor
   (native/load-payload-byte-buffer-writer!)
   (when (scheme/eval-string "djn-locked-writer-runtime?")

@@ -83,19 +83,35 @@
         (byte! (if (fx<? n 10) (fx+ 48 n) (fx+ 87 n))))))
   (define (raw-string! s)
     (byte! 34)
-    (do ((i 0 (fx+ i 1))) ((fx=? i (string-length s)))
-      (let ((cp (char->integer (#3%string-ref s i))))
-        (case cp
-          ((34 92 47) (byte! 92) (byte! cp))
-          ((8) (ascii! "\\b")) ((12) (ascii! "\\f"))
-          ((10) (ascii! "\\n")) ((13) (ascii! "\\r")) ((9) (ascii! "\\t"))
+    ;; No pre-scan or temporary UTF-8 copy. Clean ASCII advances a local cursor
+    ;; instead of calling byte!/updating its captured mutable cell per byte.
+    ;; Publish the cursor before every escape and flush, retaining exactly the
+    ;; same scratch-boundary, budget and surrogate behavior as the scalar path.
+    (let ((n (string-length s)))
+      (let loop ((i 0) (cursor used))
+        (cond
+          ((fx=? i n) (set! used cursor))
+          ((fx=? cursor 65536)
+           (set! used cursor) (flush-buffer!) (loop i used))
           (else
-            (cond ((or (fx<? cp 32) (fx>? cp 127))
-                   (if (fx<=? cp #xffff) (u16! cp)
-                       (let ((n (fx- cp #x10000)))
-                         (u16! (fx+ #xd800 (fxsra n 10)))
-                         (u16! (fx+ #xdc00 (fxand n #x3ff))))))
-                  (else (byte! cp)))))))
+           (let ((cp (char->integer (#3%string-ref s i))))
+             (if (and (fx>=? cp 32) (fx<=? cp 127)
+                      (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47)))
+                 (begin
+                   (#3%bytevector-u8-set! buf cursor cp)
+                   (loop (fx+ i 1) (fx+ cursor 1)))
+                 (begin
+                   (set! used cursor)
+                   (case cp
+                     ((34 92 47) (byte! 92) (byte! cp))
+                     ((8) (ascii! "\\b")) ((12) (ascii! "\\f"))
+                     ((10) (ascii! "\\n")) ((13) (ascii! "\\r")) ((9) (ascii! "\\t"))
+                     (else
+                      (if (fx<=? cp #xffff) (u16! cp)
+                          (let ((x (fx- cp #x10000)))
+                            (u16! (fx+ #xd800 (fxsra x 10)))
+                            (u16! (fx+ #xdc00 (fxand x #x3ff)))))))
+                   (loop (fx+ i 1) used))))))))
     (byte! 34))
   (define (append-range! bytes start end)
     ;; Private buffer/scratch ranges only; bytevector-copy! retains bounds checks.
