@@ -202,6 +202,29 @@
         (if omit? printed?
             (begin (when printed? (byte! 44))
                    (string! name) (byte! 58) (emit! child) #t)))))
+  ;; Use the receiver's public seq operation, never its private tree. Tagged
+  ;; tables may carry custom operations, and lazy sequence callbacks can inspect
+  ;; or replace the actual writer. Publish/synchronize at every such boundary.
+  (define (observe thunk)
+    (flush!)
+    (let ((result (thunk))) (sync!) result))
+  (define (emit-seq-map! x)
+    (byte! 123)
+    (let loop ((xs (observe (lambda () (jolt-seq x)))) (printed? #f))
+      (unless (jolt-nil? (observe (lambda () (jolt-seq xs))))
+        (let* ((entry (observe (lambda () (jolt-first xs))))
+               (key (observe (lambda () (jolt-nth entry 0 jolt-nil))))
+               (child (observe (lambda () (jolt-nth entry 1 jolt-nil))))
+               (name (if (string? key) key
+                         (observe (lambda ()
+                           (jolt-invoke1 (vector-ref stock-slots 10) key)))))
+               ;; Stock write-object realizes next after key conversion but
+               ;; before validating the key or invoking the child JSONWriter.
+               (next (observe (lambda () (jolt-next xs))))
+               (printed-next? (emit-map-entry! name child printed?)))
+          (unless (jolt-nil? (observe (lambda () (jolt-seq next))))
+            (loop next printed-next?)))))
+    (byte! 125))
   (define (emit! x)
     (let ((root (var-cell-root djn-method-cell)))
       (if (not (eq? root (vector-ref stock-slots 0)))
@@ -229,6 +252,10 @@
                (byte! 123)
                (pmap-fold-seq-order x emit-map-entry! #f)
                (byte! 125))
+              ;; The already-selected stock map method establishes map
+              ;; semantics. Inspect no user tag/equality and bypass no :ops.
+              ((and (htable? x) (eq? impl (vector-ref stock-slots 7)))
+               (emit-seq-map! x))
               (else (invoke! impl x)))))))
 
     ;; One set of dynamic-wind closures per serial factory, not per row.

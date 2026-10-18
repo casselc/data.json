@@ -2,6 +2,12 @@
 
 ## Unreleased — experimental, fork-only
 
+- Keep tagged-table maps such as sorted maps on the explicit native byte
+  emitter after selecting their stock map JSONWriter. Traverse the receiver's
+  live sequence operations rather than a private tree, publishing and syncing
+  its real writer around callbacks. Preserve custom operations, lazy-next
+  ordering, method replacement, reentry and errors; no default-backend change.
+
 - Emit short clean ASCII strings directly into available native scratch without
   fragment-cache hashing. Publish the cursor only after full qualification;
   escaped/Unicode strings and buffer-boundary cases keep the existing cached

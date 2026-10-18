@@ -54,7 +54,7 @@ jobs:
         run: |
           "$WRITER_JOLT_BIN" -Srepro -A:jolt-native-test \
             -Sdeps '{:paths ["src/main/clojure" "src/test/clojure"]}' \
-            -e "(require 'clojure.data.json-byte-writer-test 'clojure.data.json-segmented-batch-test 'clojure.test) (let [r (clojure.test/run-tests 'clojure.data.json-byte-writer-test 'clojure.data.json-segmented-batch-test)] (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1)))"
+            -e "(require 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test 'clojure.test) (let [r (clojure.test/run-tests 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test)] (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1)))"
 
   jvm:
     name: JVM Clojure 1.11.4 (Linux x86_64)
