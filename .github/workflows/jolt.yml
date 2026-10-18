@@ -52,9 +52,24 @@ jobs:
       - name: Require byte and segmented writer regression tests
         shell: bash
         run: |
-          "$WRITER_JOLT_BIN" -Srepro -A:jolt-native-test \
-            -Sdeps '{:paths ["src/main/clojure" "src/test/clojure"]}' \
-            -e "(require 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test 'clojure.test) (let [r (clojure.test/run-tests 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test)] (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1)))"
+          "$WRITER_JOLT_BIN" -Srepro \
+            -Sdeps '{:paths ["src/main/clojure" "src/test/clojure" "src/test/jolt"]}' \
+            -e "(println :byte-sorted-segmented-gate :entered) (require 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test 'clojure.test) (let [r (clojure.test/run-tests 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test)] (assert (= 60 (:test r))) (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+      - name: Check out exact optional runtime helper source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: casselc/jolt
+          ref: fc6d0678c5ee4c563c5db0fc01f27c7c04aa7c2f
+          path: .ci/stock-fold-core
+          persist-credentials: false
+      - name: Require stock-fold consumer controls (explicit source overlay)
+        shell: bash
+        run: |
+          # This tests the exact helper SOURCE on the qualified runtime, not
+          # a rebuilt Jolt 0.8.23 artifact. Ordinary absence/fallback ran above.
+          "$WRITER_JOLT_BIN" -Srepro \
+            -Sdeps '{:paths ["src/main/clojure" "src/test/clojure" "src/test/jolt"]}' \
+            -e "(println :stock-fold-source-overlay :entered) (require '[jolt.scheme :as scheme]) (let [source (slurp \".ci/stock-fold-core/host/chez/host-table.ss\") start (.indexOf source \";; Internal native-consumer helpers,\") end (.indexOf source \";; --- extend the collection dispatchers\")] (assert (and (<= 0 start) (< start end))) (scheme/eval-string (subs source start end))) (require 'clojure.data.json-stock-sorted-fold-test 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test 'clojure.test) (let [r (clojure.test/run-tests 'clojure.data.json-stock-sorted-fold-test 'clojure.data.json-byte-writer-test 'clojure.data.json-sorted-byte-test 'clojure.data.json-segmented-batch-test)] (assert (= 65 (:test r))) (prn {:gate :stock-fold-source-overlay :complete true}) (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
 
   jvm:
     name: JVM Clojure 1.11.4 (Linux x86_64)
