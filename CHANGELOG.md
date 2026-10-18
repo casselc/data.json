@@ -2,6 +2,13 @@
 
 ## Unreleased — experimental, fork-only
 
+- Compare the known default omission marker by identity, avoiding structural
+  equality and collection normalization just to reject that marker. Apply the
+  same rule to portable output and the default-options native writers. Custom
+  value functions keep their existing equality, transformation and fallback
+  behavior. This intentionally removes equality-extension effects from the
+  default marker check; it does not change JSONWriter dispatch or key callbacks.
+
 - Use optional runtime-owned stock sorted-map folding in the explicit byte
   backend to avoid temporary entries and pure stock sequence boundaries.
   Runtime admission owns the layout; custom operation tables and runtimes

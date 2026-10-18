@@ -49,6 +49,8 @@ jobs:
           echo "WRITER_JOLT_BIN=$task_bin" >> "$GITHUB_ENV"
       - name: Require native string, live-hook and borrow controls
         run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-native-test'
+      - name: Require default omission identity and custom equality controls
+        run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-default-omission-test'
       - name: Require byte and segmented writer regression tests
         shell: bash
         run: |

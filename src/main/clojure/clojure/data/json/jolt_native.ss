@@ -328,9 +328,10 @@
                                (unless (string? name)
                                  (jolt-throw (host-new "Exception"
                                    "JSON object keys must be strings")))
-                               ;; Even the default value-fn is an omission
-                               ;; sentinel if that very function is the value.
-                               (if (jolt=2 value-fn child) printed?
+                               ;; Admission above requires the stock callback.
+                               ;; Only that very function is the default marker;
+                               ;; custom callback equality stays portable.
+                               (if (eq? value-fn child) printed?
                                    (begin
                                      (when printed? (djn-sb-append! writer ","))
                                      (djn-key-string name writer flags key-cache)

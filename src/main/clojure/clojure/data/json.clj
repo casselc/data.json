@@ -921,7 +921,12 @@
               nxt (next x)]
           (when-not (string? out-key)
             (throw (Exception. "JSON object keys must be strings")))
-          (if-not (= value-fn out-value)
+          ;; The known default function is an identity marker, not a value to
+          ;; compare structurally with arbitrary collections. Custom callable
+          ;; value functions retain their established equality behavior.
+          (if-not (if default-value?
+                    (identical? value-fn out-value)
+                    (= value-fn out-value))
             (do
               (when have-printed-kv
                 (.append out \,)

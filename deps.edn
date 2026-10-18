@@ -5,7 +5,10 @@
          :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}}
 
  :aliases
- {:jolt-stock-sorted-fold-test
+ {:jolt-default-omission-test
+  {:extra-paths ["src/test/jolt"]
+   :main-opts ["-m" "clojure.data.json-default-omission-test"]}
+  :jolt-stock-sorted-fold-test
   {:extra-paths ["src/test/jolt"]
    :main-opts ["-m" "clojure.data.json-stock-sorted-fold-test"]}
   :whole-reader-test
