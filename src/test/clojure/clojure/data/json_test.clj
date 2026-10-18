@@ -744,6 +744,17 @@
          (with-out-str
            (json/pprint "\u1234\u4567" :escape-unicode false)))))
 
+(deftest default-marker-and-custom-transform-nested-sorted-values
+  (let [marker (:value-fn json/default-write-options)
+        nested (sorted-map "b" false "a" 42)]
+    (is (= "{\"keep\":{\"a\":42,\"b\":false}}"
+           (json/write-str (array-map "skip" marker "keep" nested))))
+    (is (= "{\"keep\":{\"a\":42,\"b\":false}}"
+           (json/write-str (sorted-map "skip" marker "keep" nested))))
+    (is (= "{\"keep\":{\"a\":42,\"b\":false}}"
+           (json/write-str (array-map "keep" nested "skip" 9)
+                           :value-fn (fn omit [k v] (if (= "skip" k) omit v)))))))
+
 (defn benchmark []
   (dotimes [_ 8]
     (time

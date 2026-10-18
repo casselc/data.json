@@ -67,6 +67,14 @@ realization order. Only boolean Unicode/slash/JavaScript-separator escape
 switches may differ from stock options; custom/unknown options use the portable
 writer before emission. No input or encoded field is cached.
 
+The default value function also serves as an omission marker: only that exact
+function value is omitted. This fork checks the known default marker by
+identity, in both portable output and the native writers. It no longer invokes
+structural equality extensions merely to test that default marker against a
+collection. Custom `:value-fn` callables retain their existing equality check,
+transformations and portable fallback; JSONWriter and key-policy callbacks are
+unchanged. Reader value functions are unchanged.
+
 For repeated short strings, a separate experimental
 The experimental `native/write-prefixed-batch-text!` materializes a fixed String
 prefix and JSONEachRow payload together. The prefix is outside the row-byte

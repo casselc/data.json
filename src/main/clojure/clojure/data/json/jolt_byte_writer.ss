@@ -198,15 +198,15 @@
                     (begin (flush!)
                       (let ((name (jolt-invoke1 (vector-ref stock-slots 10) k)))
                         (sync!) name)))))
-      ;; Unknown equality representations may themselves be observable;
-      ;; preserve the stock sentinel check and its flush boundary.
+      ;; Retain the conservative publication boundary for unknown values.
+      ;; Default omission itself is now a callback-free identity check.
       (unless (or (jolt-nil? child) (string? child) (boolean? child)
                   (number? child) (keyword? child) (symbol-t? child)
                   (pvec? child) (pmap? child) (procedure? child)) (flush!))
       (unless (string? name)
         (flush!)
         (jolt-throw (host-new "Exception" "JSON object keys must be strings")))
-      (let ((omit? (jolt=2 (vector-ref stock-slots 9) child)))
+      (let ((omit? (eq? (vector-ref stock-slots 9) child)))
         (sync!)
         (if omit? printed?
             (begin (when printed? (byte! 44))
