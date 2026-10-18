@@ -114,8 +114,14 @@
                 (let [factory (scheme/eval-string
                                 (str "(let ((visits 0)) " body
                                      " (jolt-vector djn-make-byte-buffer-writer (lambda () visits)))"))
-                      out (java.io.StringWriter.)]
-                  (((nth factory 0)) (sorted-map "a" 42) out json/default-write-options
+                      out (java.io.StringWriter.)
+                      value (sorted-map "a" 42)]
+                  ;; Keep this a generic-sequence mechanism control even on a
+                  ;; runtime with an optional stock-map fold. Same stock seq,
+                  ;; distinct per-object ops identity: no content change.
+                  (host/ref-put! value :ops
+                    (assoc (host/ref-get value :ops) :sequence-control true))
+                  (((nth factory 0)) value out json/default-write-options
                                       @#'json/native-writer-stock)
                   [(.toString out) ((nth factory 1))]))]
     (is (not= source observed))

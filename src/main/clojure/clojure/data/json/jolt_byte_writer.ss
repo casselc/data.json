@@ -1,6 +1,15 @@
 ;; Opt-in byte writer: one serial payload owns the emitter and bounded caches.
 ;; Per-row operations borrow scratch and establish a restorable context; helper
 ;; closures are constructed once, not once for every row. Default options only.
+(define djn-stock-sorted-map-folder
+  (and (top-level-bound? 'stock-sorted-map?)
+       (top-level-bound? 'sorted-map-fold-seq-order)
+       (let ((admit (top-level-value 'stock-sorted-map?))
+             (fold (top-level-value 'sorted-map-fold-seq-order)))
+         (and (procedure? admit) (procedure? fold)
+              (bitwise-bit-set? (procedure-arity-mask admit) 1)
+              (bitwise-bit-set? (procedure-arity-mask fold) 3)
+              (vector admit fold)))))
 (define (djn-make-byte-buffer-writer)
   (unless (bitwise-bit-set? (procedure-arity-mask make-protocol-method-site) 3)
     (error 'byte-writer "runtime lacks observable classification boundary"))
@@ -225,6 +234,14 @@
           (unless (jolt-nil? (observe (lambda () (jolt-seq next))))
             (loop next printed-next?)))))
     (byte! 125))
+  (define (emit-stock-sorted-map! x)
+    ;; Runtime owns both admission and representation. Pure stock sequence
+    ;; operations need no publication, but every child still resolves its live
+    ;; writer and publishes before observable classification/custom dispatch.
+    ;; Non-stock per-object operations retain emit-seq-map! unchanged.
+    (byte! 123)
+    ((vector-ref djn-stock-sorted-map-folder 1) x emit-map-entry! #f)
+    (byte! 125))
   (define (emit! x)
     (let ((root (var-cell-root djn-method-cell)))
       (if (not (eq? root (vector-ref stock-slots 0)))
@@ -255,7 +272,10 @@
               ;; The already-selected stock map method establishes map
               ;; semantics. Inspect no user tag/equality and bypass no :ops.
               ((and (htable? x) (eq? impl (vector-ref stock-slots 7)))
-               (emit-seq-map! x))
+               (if (and djn-stock-sorted-map-folder
+                        ((vector-ref djn-stock-sorted-map-folder 0) x))
+                   (emit-stock-sorted-map! x)
+                   (emit-seq-map! x)))
               (else (invoke! impl x)))))))
 
     ;; One set of dynamic-wind closures per serial factory, not per row.

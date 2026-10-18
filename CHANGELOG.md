@@ -2,6 +2,12 @@
 
 ## Unreleased — experimental, fork-only
 
+- Use optional runtime-owned stock sorted-map folding in the explicit byte
+  backend to avoid temporary entries and pure stock sequence boundaries.
+  Runtime admission owns the layout; custom operation tables and runtimes
+  without both helpers keep the existing sequence path. Child dispatch,
+  callback writer visibility, options and backend defaults are unchanged.
+
 - Keep tagged-table maps such as sorted maps on the explicit native byte
   emitter after selecting their stock map JSONWriter. Traverse the receiver's
   live sequence operations rather than a private tree, publishing and syncing
