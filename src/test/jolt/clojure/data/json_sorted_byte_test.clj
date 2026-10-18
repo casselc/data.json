@@ -123,6 +123,67 @@
     (is (= ["{\"a\":42}" 1] (probe observed)))
     (is (= ["{\"a\":42}" 0] (probe mutant)))))
 
+(deftest nondefault-options-retain-the-portable-path-and-callbacks
+  (doseq [mode [:keys :values :omit]]
+    (let [run (fn [native?]
+                (let [effects (atom [])
+                      transform (fn value [k v]
+                                  (swap! effects conj [:value k v])
+                                  (if (and (= mode :omit) (= k "b")) value (str v "!")))
+                      key-fn (fn [k] (swap! effects conj [:key k]) (str "prefix-" k))
+                      opts (case mode :keys [:key-fn key-fn] [:value-fn transform])
+                      result (binding [json/*experimental-native-writer*
+                                       (when native? (native/load-payload-byte-buffer-writer!))]
+                               (apply json/write-str (sorted-map "a" 42 "b" false) opts))]
+                  [result @effects]))]
+      (is (= (run false) (run true)))))
+  (let [value (sorted-map "a" (:value-fn json/default-write-options) "b" 42)]
+    (is (= "{\"b\":42}" (candidate value)))))
+
+(deftest throwing-seq-and-next-preserve-partial-output-and-allow-reuse
+  (doseq [site [:seq :next]]
+    (let [write (native/load-payload-byte-buffer-writer!)
+          run (fn [native?]
+                (let [out (java.io.StringWriter.) value (sorted-map "ignored" false)
+                      ops (host/ref-get value :ops)]
+                  (host/ref-put! value :ops
+                    (assoc ops :seq
+                      (fn [_]
+                        (if (= site :seq)
+                          (do (.write out " ") (throw (ex-info "expected-seq" {})))
+                          (cons ["a" 42]
+                                (lazy-seq (.write out " ")
+                                          (throw (ex-info "expected-next" {}))))))))
+                  [(try (if native?
+                          (write value out json/default-write-options @#'json/native-writer-stock)
+                          (json/write value out))
+                        :missing-error (catch Throwable _ :threw))
+                   (.toString out)]))]
+      (is (= (run false) (run true)))
+      (let [out (java.io.StringWriter.)]
+        (write (sorted-map "ok" true) out json/default-write-options @#'json/native-writer-stock)
+        (is (= "{\"ok\":true}" (.toString out)))))))
+
+(deftest custom-seq-can-return-a-tagged-continuation-and-list-entries
+  (let [run (fn [native?]
+              (let [effects (atom []) out (java.io.StringWriter.)
+                    outer (sorted-map "outer" 1) continuation (sorted-map "inner" 2)
+                    entries (list (list "a" 42) (list "z" false))]
+                (host/ref-put! continuation :ops
+                  (assoc (host/ref-get continuation :ops)
+                         :seq (fn [_] (swap! effects conj [:continuation-seq (.toString out)]) entries)
+                         :first (fn [_] (swap! effects conj [:continuation-first (.toString out)])
+                                  (first entries))))
+                (host/ref-put! outer :ops
+                  (assoc (host/ref-get outer :ops) :seq
+                         (fn [_] (swap! effects conj [:outer-seq (.toString out)]) continuation)))
+                (if native?
+                  ((native/load-payload-byte-buffer-writer!) outer out json/default-write-options
+                                                             @#'json/native-writer-stock)
+                  (json/write outer out))
+                [(.toString out) @effects]))]
+    (is (= (run false) (run true)))))
+
 (defn -main [& _]
   (let [r (run-tests 'clojure.data.json-sorted-byte-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))
